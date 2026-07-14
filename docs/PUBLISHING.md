@@ -15,6 +15,8 @@ owners.
 - Confirm every relative Markdown link resolves.
 - Confirm the project MIT license remains in `LICENSE` and the full upstream MIT notice remains in `THIRD_PARTY_NOTICES.md`.
 - Confirm commit metadata does not expose an unintended personal email address.
+- Confirm GitHub email privacy is enabled for web-based Git operations before
+  opening the first public-target pull request.
 - Inspect `refs/pull/*/head` in any source repository. If an old pull ref retains
   private history or unintended personal metadata, do not change that
   repository's visibility.
@@ -24,6 +26,9 @@ owners.
 - Create a new clean publishing repository from the reviewed snapshot only.
 - Prepare the public snapshot on a scoped release-preparation branch (`release/v0.2.0` by default; a linked Issue branch is acceptable for the initial snapshot).
 - Open a pull request into `main` while the repository is still private.
+- Immediately inspect `refs/pull/<number>/merge`; both its author and committer
+  must use noreply addresses. If not, keep the repository private and recreate
+  the canonical publishing repository after fixing the account setting.
 - Require passing CI and no unresolved material review findings.
 - Review both README files using their GitHub-rendered branch or pull-request URLs.
 - Obtain explicit maintainer approval for the rendered README before merge.
@@ -32,6 +37,8 @@ owners.
 
 - Re-fetch repository visibility, default branch, Actions status, tags, and releases.
 - Confirm the worktree is clean and `main` contains the reviewed commit.
+- Confirm the final merge commit and all reachable history use approved email
+  metadata.
 - Obtain explicit maintainer approval before changing the clean publishing
   repository's visibility to public.
 - Immediately after the visibility change, enable private vulnerability reporting and verify that **Report a vulnerability** is available.
