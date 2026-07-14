@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autonomous Project Run"
+  short_description: "Wayfinderから全Issue完了まで低負担で自律実行"
+  default_prompt: "Use $autonomous-project-run to take this project from Wayfinder through fresh-task ticket execution and final audit with minimal supervision."

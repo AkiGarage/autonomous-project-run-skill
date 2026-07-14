@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.env.*
+CONTINUITY.md
+HANDOFF.md
+*.log
+*.zip
+__pycache__/
+*.pyc
