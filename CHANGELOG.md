@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-15
+
+### Added
+
+- Durable lifecycle state, fenced watchdog recovery, and safe task handoffs for long unattended runs.
+- Canonical-spec and exact-source-state fingerprints for reusable reads, tests, and artifacts.
+- Selective evidence invalidation, dependency/reverse-dependency closure checks, and full-reread fallbacks.
+- Change-class gates and clean exact-commit final integration verification.
+
+### Changed
+
+- Clarified that routine repository mutations require an explicit end-to-end user request.
+- Added read-after-write reconciliation for remote mutations and unknown outcomes.
+
 ## [0.2.0] - 2026-07-14
 
 ### Added

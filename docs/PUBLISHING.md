@@ -1,10 +1,13 @@
 # Publishing checklist
 
-This preparation repository must remain private. Publish only an allowlisted,
-scrubbed snapshot into a new clean publishing repository, kept private until
-every gate below passes. Do not reuse this repository's Git history: closed
-pull-request refs can retain rewritten commits and are read-only to repository
-owners.
+Prepare release inputs in a private source repository. Publish only an
+allowlisted, scrubbed snapshot into the canonical publishing repository, kept
+private until every initial-publication gate below passes. For the first public
+release, create a new clean publishing repository and do not reuse the private
+source repository's Git history: closed pull-request refs can retain rewritten
+commits and are read-only to repository owners. For later releases, update the
+already-reviewed canonical public repository through a release branch and
+repeat the public-surface and pull-request gates.
 
 ## Public-surface gate
 
@@ -23,9 +26,12 @@ owners.
 
 ## Pull-request gate
 
-- Create a new clean publishing repository from the reviewed snapshot only.
-- Prepare the public snapshot on a scoped release-preparation branch (`release/v0.2.0` by default; a linked Issue branch is acceptable for the initial snapshot).
-- Open a pull request into `main` while the repository is still private.
+- For the first publication, create a new clean publishing repository from the
+  reviewed snapshot only. For later releases, copy the reviewed snapshot onto
+  a release branch in the canonical public repository.
+- Prepare the public snapshot on a scoped release-preparation branch (`release/v0.3.0` by default; a linked Issue branch is acceptable for the initial snapshot).
+- Open a pull request into `main`. For the first publication, keep the
+  repository private until every initial-publication gate passes.
 - Immediately inspect `refs/pull/<number>/merge`; both its author and committer
   must use noreply addresses. If not, keep the repository private and recreate
   the canonical publishing repository after fixing the account setting.

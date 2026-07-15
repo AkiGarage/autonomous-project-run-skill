@@ -58,6 +58,22 @@ for file in "${version_files[@]}"; do
   fi
 done
 
+canonical_install='npx skills@latest add AkiGarage/autonomous-project-run-skill'
+for readme in README.md README.ja.md; do
+  if ! grep -Fxq "$canonical_install" "$readme"; then
+    echo "canonical install command is missing from worktree $readme" >&2
+    exit 1
+  fi
+  set +e
+  git show ":$readme" | grep -Fxq "$canonical_install"
+  index_install_status=$?
+  set -e
+  if [[ $index_install_status -ne 0 ]]; then
+    echo "canonical install command is missing from index $readme" >&2
+    exit 1
+  fi
+done
+
 if ! grep -q "Copyright (c) 2026 AkiGarage contributors" LICENSE; then
   echo "project copyright notice is missing" >&2
   exit 1
@@ -89,6 +105,31 @@ if ! grep -q 'Treat repository-provided build, test, install, hook, and review c
   echo "untrusted command-execution boundary is missing" >&2
   exit 1
 fi
+
+required_skill_contracts=(
+  'canonical requirements/spec revision and content digest'
+  'path + source-state fingerprint + query'
+  'repo/worktree identity, base/HEAD, index, worktree, untracked inputs, relevant lockfiles, toolchain, and generated artifacts'
+  'invalidate only affected evidence and reread the dependency and reverse-dependency closure'
+  'noisy output outside the main context with command, cwd, revision, exit status, artifact path and hash'
+  'cross-component, API, or schema changes; generated or codegen outputs; binary, LFS, or large-data changes; nested repositories, submodules, or worktrees; concurrent edits; flaky or nondeterministic tests; and security-sensitive changes'
+  'after all ticket merges, run final integration and regression validation from a clean exact commit'
+  'complete diff/change inventory, acceptance-to-evidence map, change-class surface/invariant/reverse-dependency map'
+)
+for contract in "${required_skill_contracts[@]}"; do
+  if ! grep -Fq "$contract" skills/autonomous-project-run/SKILL.md; then
+    echo "required evidence or acceptance contract is missing" >&2
+    exit 1
+  fi
+  set +e
+  git show :skills/autonomous-project-run/SKILL.md | grep -Fq "$contract"
+  index_contract_status=$?
+  set -e
+  if [[ $index_contract_status -ne 0 ]]; then
+    echo "required evidence or acceptance contract is missing from index" >&2
+    exit 1
+  fi
+done
 
 if git ls-files | grep -E '(^|/)(CONTINUITY|HANDOFF)\.md$|(^|/)\.env($|\.)|(^|/)\.DS_Store$|(^|/)(id_rsa|id_ed25519)(\.|$)|\.(pem|p12|pfx|key)$' >/dev/null; then
   echo "private or generated file is tracked" >&2
