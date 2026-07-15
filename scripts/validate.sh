@@ -121,6 +121,14 @@ for contract in "${required_skill_contracts[@]}"; do
     echo "required evidence or acceptance contract is missing" >&2
     exit 1
   fi
+  set +e
+  git show :skills/autonomous-project-run/SKILL.md | grep -Fq "$contract"
+  index_contract_status=$?
+  set -e
+  if [[ $index_contract_status -ne 0 ]]; then
+    echo "required evidence or acceptance contract is missing from index" >&2
+    exit 1
+  fi
 done
 
 if git ls-files | grep -E '(^|/)(CONTINUITY|HANDOFF)\.md$|(^|/)\.env($|\.)|(^|/)\.DS_Store$|(^|/)(id_rsa|id_ed25519)(\.|$)|\.(pem|p12|pfx|key)$' >/dev/null; then

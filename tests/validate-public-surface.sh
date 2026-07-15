@@ -80,7 +80,12 @@ for marker in "${required_contract_markers[@]}"; do
     echo "validator accepted a skill without a required evidence contract" >&2
     exit 1
   fi
+  git add "$skill_path"
   cp "$test_root/SKILL.md" "$skill_path"
+  if ./scripts/validate.sh >/dev/null 2>&1; then
+    echo "validator accepted a staged skill without a required evidence contract" >&2
+    exit 1
+  fi
   git add "$skill_path"
 done
 ./scripts/validate.sh >/dev/null
