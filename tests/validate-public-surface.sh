@@ -27,7 +27,9 @@ git add VERSION
 ./scripts/validate.sh >/dev/null
 
 cp README.md "$test_root/versioned-README.md"
-sed 's/0[.]2[.]0/0.3.0/' README.md > README.with-stale-version.md
+current_version=$(tr -d '\r\n' < VERSION)
+escaped_version=${current_version//./\\.}
+sed "s/$escaped_version/0.0.0/" README.md > README.with-stale-version.md
 mv README.with-stale-version.md README.md
 if ./scripts/validate.sh >/dev/null 2>&1; then
   echo "validator accepted stale README version metadata" >&2
@@ -40,6 +42,47 @@ if ./scripts/validate.sh >/dev/null 2>&1; then
   exit 1
 fi
 git add README.md
+./scripts/validate.sh >/dev/null
+
+cp README.md "$test_root/install-README.md"
+sed 's#AkiGarage/autonomous-project-run-skill#AkiGarage/autonomous-project-run#' \
+  README.md > README.with-stale-install.md
+mv README.with-stale-install.md README.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a stale README install target" >&2
+  exit 1
+fi
+git add README.md
+cp "$test_root/install-README.md" README.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a stale staged README install target" >&2
+  exit 1
+fi
+git add README.md
+./scripts/validate.sh >/dev/null
+
+skill_path=skills/autonomous-project-run/SKILL.md
+cp "$skill_path" "$test_root/SKILL.md"
+required_contract_markers=(
+  'canonical requirements/spec revision and content digest'
+  'path + source-state fingerprint + query'
+  'repo/worktree identity, base/HEAD, index, worktree, untracked inputs, relevant lockfiles, toolchain, and generated artifacts'
+  'invalidate only affected evidence and reread the dependency and reverse-dependency closure'
+  'noisy output outside the main context with command, cwd, revision, exit status, artifact path and hash'
+  'cross-component, API, or schema changes; generated or codegen outputs; binary, LFS, or large-data changes; nested repositories, submodules, or worktrees; concurrent edits; flaky or nondeterministic tests; and security-sensitive changes'
+  'after all ticket merges, run final integration and regression validation from a clean exact commit'
+  'complete diff/change inventory, acceptance-to-evidence map, change-class surface/invariant/reverse-dependency map'
+)
+for marker in "${required_contract_markers[@]}"; do
+  awk -v marker="$marker" 'index($0, marker) == 0 { print }' "$skill_path" > skill-without-contract.md
+  mv skill-without-contract.md "$skill_path"
+  if ./scripts/validate.sh >/dev/null 2>&1; then
+    echo "validator accepted a skill without a required evidence contract" >&2
+    exit 1
+  fi
+  cp "$test_root/SKILL.md" "$skill_path"
+  git add "$skill_path"
+done
 ./scripts/validate.sh >/dev/null
 
 local_path_cases=(

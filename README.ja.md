@@ -6,7 +6,7 @@
 
 `autonomous-project-run` は、仕様化、依存関係付きチケット、作業を分離した実装、テスト、AIレビュー、CI、Pull Request、マージ、Issueの完了確認、最終監査までをまとめて進行します。
 
-> 状態：pre-stable（`0.2.0`）。セキュリティとreleaseのgateは本リポジトリに記載しています。
+> 状態：pre-stable（`0.3.0`）。セキュリティとreleaseのgateは本リポジトリに記載しています。
 
 [English](README.md)
 
@@ -15,6 +15,8 @@
 - 計画や実装の途中からでも、最初に残っている工程を見つけて再開します。
 - 方向性、範囲、取り消せない操作に関わる重要な判断だけを人に確認します。
 - 1つの実装チケットを1つの新しいtaskで扱い、検証してから次へ進みます。
+- 正式な仕様、正確なsource state、dependencies、toolchain、生成物が一致する間だけ既存のevidenceを再利用します。
+- 変更classごとのgateを適用し、全チケットのmerge後にcleanなexact commitから最終integrationを検証します。
 - production変更、credentials、支払い、破壊的操作など、明示された安全境界で停止します。
 - 全チケットを横断して監査し、本当に完了しているか確認します。
 
@@ -23,7 +25,8 @@
 - Agent Skillsに対応したcoding agent
 - 全工程を使う場合は、GitHubリポジトリと認証済みの `gh` CLI
 - Matt Pocock氏のworkflow skill suite（`setup-matt-pocock-skills`、`wayfinder`、`to-spec`、`to-tickets`、`implement` を含む）
-- 無人で複数Issueを進める場合は、新しいtask/threadの作成、分離されたworktree、定期heartbeatの仕組み
+- 無人で複数Issueを進める場合は、新しいtask/threadの作成、分離されたworktree、永続化したlifecycle state、singleton watchdogの仕組み
+- hostが提供する場合はsafe-continuation handoff。ない場合は、検証済みの最小handoffを使い、正式なstateを独立して再確認できること
 - Codexのレビューゲートを使う場合は `codex-autoreview`
 
 先に元となるworkflow skillsをインストールします。
@@ -35,10 +38,10 @@ npx skills@latest add mattpocock/skills
 表示された選択肢からworkflow suiteを選びます。関連するcompanion skillsには `grilling`、`domain-modeling`、`research`、`prototype`、`tdd`、`code-review` があります。対象リポジトリごとに `/setup-matt-pocock-skills` を一度実行し、続いて本スキルをインストールします。
 
 ```sh
-npx skills@latest add AkiGarage/autonomous-project-run
+npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。新しいtask、分離worktree、heartbeat automationが使えない場合は、無人実行ではなく、人が確認しながら手動で継続するworkflowとして利用してください。
+入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。新しいtask、分離worktree、永続化したlifecycle state、watchdog automationが使えない場合は、無人実行ではなく、人が確認しながら手動で継続するworkflowとして利用してください。
 
 ## 使い方
 
@@ -48,7 +51,7 @@ npx skills@latest add AkiGarage/autonomous-project-run
 $autonomous-project-run を使って、このプロジェクトを少ない確認だけで完了まで進めてください。
 ```
 
-ブランチ作成、テスト、レビュー、commit、Pull Request、マージなど、通常のリポジトリ作業は自律実行の対象です。一方、Public公開、支払い、credentialsへのアクセス、production変更、破壊的な整理、force-push、保護ルールの回避は許可されません。
+ユーザーがend-to-endの実行を明確に依頼した場合、ブランチ作成、テスト、レビュー、commit、Pull Request、マージなどの通常作業をそのlifecycleに含めます。スキルへの言及、確認、設定だけでは、その権限は付与されません。Public公開、支払い、credentialsへのアクセス、production変更、破壊的な整理、force-push、保護ルールの回避は常に許可されません。
 
 ## リポジトリ構成
 
