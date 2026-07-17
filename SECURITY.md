@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Before the first stable release, security fixes are applied to the latest commit on `main`. After `0.3.0`, only the latest `0.3.x` release is supported unless a release note states otherwise.
+Before the first stable release, security fixes are applied to the latest commit on `main`. After `0.4.0`, only the latest `0.4.x` release is supported unless a release note states otherwise.
 
 ## Reporting a vulnerability
 

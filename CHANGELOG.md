@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Require affirmative user intent for host activation; negated, quoted, documentation, configuration, inspection, and review-only mentions no longer activate APR.
+- Keep live leases exclusive and allow expired cross-session ownership reconciliation only through the new session's trusted affirmative APR `UserPromptSubmit`; ordinary `Stop` and caller-supplied evidence cannot release or transfer ownership.
+
+## [0.4.0] - 2026-07-15
+
+### Added
+
+- Deterministic APR-local runtime gates for project/worktree mutation safety, compact handoffs, and Luna xhigh bootstrap packets.
+- Stateless singleton guardian policy with bounded state-only input and silent unchanged/terminal polling.
+- Automatic per-repository Matt Pocock setup detection, official setup-skill invocation, and completion revalidation before planning or mutation.
+
+### Changed
+
+- Treat 64k as an emergency root ceiling and require safe continuation before a second root compaction.
+- Require project association, physical cwd, and managed worktree identity together; Git common-dir equality alone is insufficient.
+
 ## [0.3.0] - 2026-07-15
 
 ### Added
