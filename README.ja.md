@@ -15,7 +15,7 @@
 - 計画や実装の途中からでも、最初に残っている工程を見つけて再開します。
 - 方向性、範囲、取り消せない操作に関わる重要な判断だけを人に確認します。
 - 1つの実装チケットを1つの新しいtaskで扱い、検証してから次へ進みます。
-- Matt Pocock氏のリポジトリ別設定が不足していないか確認し、公式setup skillを自動で呼び出して、計画や変更の前に完了を再検証します。
+- 仕様作成、TDD、code reviewなどの補助workflowを対象プロジェクトですぐ使えるか起動時に確認し、準備が足りなければ公式setup skillで自動的に整えます。
 - recovery guardianをread-only、project-singleton、transcript非継承とし、状態に変更がない場合やterminal状態では何も出力しません。
 - 正式な仕様、正確なsource state、dependencies、toolchain、生成物が一致する間だけ既存のevidenceを再利用します。
 - project/worktreeの安全性、短いhandoff、Luna xhighの依頼形式を、決定的なlocal runtime gateで強制します。
@@ -44,7 +44,7 @@ npx skills@latest add mattpocock/skills
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-APRは対象リポジトリで起動すると、同梱のsetup preflightを実行します。必要な `docs/agents/*.md` 設定や対応する `Agent skills` の指示が不足・不完全な場合は、公式の `setup-matt-pocock-skills` skillを自動で呼び出し、そのskillが求める確認を行ったうえで、設定完了を再検証してから続行します。事前に `/setup-matt-pocock-skills` を手動実行しておく必要はありません。
+APRを対象リポジトリで起動すると、仕様作成、TDD、code reviewなどの補助workflowを使う準備が整っているか確認します。必要な設定ファイルや `Agent Skills` の指示が不足・不完全な場合は、公式の `setup-matt-pocock-skills` skillを自動で呼び出し、そのskillが求める確認を行ったうえで、準備が完了したことを再検証してから続行します。事前に `/setup-matt-pocock-skills` を手動実行しておく必要はありません。
 
 入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。Guardianにはsingleton ownership、boundedなstate-only input、transcript非継承、変更なし・terminal状態での無出力が必要です。hostがこれらを強制できない場合、本スキルはguardianを追加せず、人が確認しながら手動で継続します。
 

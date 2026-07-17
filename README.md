@@ -15,7 +15,7 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 - Resumes a project at the earliest incomplete planning or execution stage.
 - Asks for human input only when a decision materially changes direction, scope, or irreversible behavior.
 - Runs one implementation ticket per fresh task and verifies it before moving forward.
-- Detects missing Matt Pocock per-repository configuration, invokes the official setup skill automatically, and verifies completion before planning or mutation.
+- Checks at startup whether the target project is ready to use companion workflows such as specification, TDD, and code review; if not, it uses the official setup skill to prepare them automatically.
 - Keeps recovery guardians read-only, project-singleton, transcript-free, and silent when state is unchanged or terminal.
 - Reuses evidence only while the canonical spec, exact source state, dependencies, toolchain, and generated artifacts still match.
 - Enforces project/worktree safety, compact handoffs, and Luna xhigh packet shape through a deterministic local runtime gate.
@@ -44,7 +44,7 @@ Select the workflow suite when prompted. Its companion skills include `grilling`
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-When APR starts in a target repository, it runs its bundled setup preflight. If the required `docs/agents/*.md` configuration and matching `Agent skills` instructions are missing or incomplete, APR automatically invokes the official `setup-matt-pocock-skills` skill, follows that skill's required confirmations, and verifies the resulting setup before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
+When APR starts in a target repository, it checks whether companion workflows such as specification, TDD, and code review are ready to use. If required configuration files or matching `Agent Skills` instructions are missing or incomplete, APR invokes the official `setup-matt-pocock-skills` skill automatically, follows that skill's required confirmations, and verifies that setup is complete before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
 
 Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. The guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; use supervised/manual continuation instead.
 
