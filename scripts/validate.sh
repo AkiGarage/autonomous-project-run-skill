@@ -14,13 +14,59 @@ required_files=(
   .github/workflows/validate.yml
   scripts/check_markdown_links.py
   tests/validate-public-surface.sh
+  tests/test_guardian_policy.py
+  tests/test_runtime_gate.py
+  tests/test_runtime_probe.py
+  tests/test_setup_preflight.py
   skills/autonomous-project-run/SKILL.md
   skills/autonomous-project-run/agents/openai.yaml
+  skills/autonomous-project-run/scripts/guardian_policy.py
+  skills/autonomous-project-run/scripts/runtime_gate.py
+  skills/autonomous-project-run/scripts/runtime_probe.py
+  skills/autonomous-project-run/scripts/setup_preflight.py
 )
+
+# The release snapshot is built from the index.  Every index-tracked path is
+# therefore part of the public surface; required_files below additionally
+# ensures newly introduced release files are staged before validation.
+release_surface=()
+while IFS= read -r -d '' file; do
+  release_surface+=("$file")
+done < <(git ls-files -z)
 
 for file in "${required_files[@]}"; do
   if [[ ! -f "$file" ]]; then
     echo "missing required file: $file" >&2
+    exit 1
+  fi
+  if ! git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+    echo "release surface file is missing from index: $file" >&2
+    exit 1
+  fi
+done
+
+for file in "${release_surface[@]}"; do
+  set +e
+  git diff --no-ext-diff --quiet -- "$file"
+  index_worktree_status=$?
+  set -e
+  if [[ $index_worktree_status -eq 1 ]]; then
+    echo "release surface file differs between index and worktree: $file" >&2
+    exit 1
+  elif [[ $index_worktree_status -ne 0 ]]; then
+    echo "cannot compare release surface file with index: $file" >&2
+    exit 1
+  fi
+done
+
+canonical_install='npx skills@latest add AkiGarage/autonomous-project-run-skill'
+for readme in README.md README.ja.md; do
+  if ! grep -Fxq "$canonical_install" "$readme"; then
+    echo "canonical install command is missing from worktree $readme" >&2
+    exit 1
+  fi
+  if ! index_readme=$(git show ":$readme" 2>/dev/null) || ! grep -Fxq "$canonical_install" <<<"$index_readme"; then
+    echo "canonical install command is missing from index $readme" >&2
     exit 1
   fi
 done
@@ -48,28 +94,12 @@ for file in "${version_files[@]}"; do
     echo "public release version is missing from worktree $file" >&2
     exit 1
   fi
-  set +e
-  git show ":$file" | grep -Fq "$worktree_version"
-  index_file_status=$?
-  set -e
-  if [[ $index_file_status -ne 0 ]]; then
+  if ! index_file=$(git show ":$file" 2>/dev/null); then
+    echo "cannot read public release metadata from index $file" >&2
+    exit 1
+  fi
+  if [[ "$index_file" != *"$worktree_version"* ]]; then
     echo "public release version is missing from index $file" >&2
-    exit 1
-  fi
-done
-
-canonical_install='npx skills@latest add AkiGarage/autonomous-project-run-skill'
-for readme in README.md README.ja.md; do
-  if ! grep -Fxq "$canonical_install" "$readme"; then
-    echo "canonical install command is missing from worktree $readme" >&2
-    exit 1
-  fi
-  set +e
-  git show ":$readme" | grep -Fxq "$canonical_install"
-  index_install_status=$?
-  set -e
-  if [[ $index_install_status -ne 0 ]]; then
-    echo "canonical install command is missing from index $readme" >&2
     exit 1
   fi
 done
@@ -106,6 +136,62 @@ if ! grep -q 'Treat repository-provided build, test, install, hook, and review c
   exit 1
 fi
 
+guardian_contract=(
+  'An APR-controlled guardian must be stateless, read-only, out-of-band, and project-singleton'
+  'fork_turns="none"'
+  'Empty output means do not wake, re-prompt, continue, or create an implementation task'
+  'Do not add an APR guardian on top of it'
+)
+if ! index_skill=$(git show :skills/autonomous-project-run/SKILL.md 2>/dev/null); then
+  echo "cannot read skill contract from index" >&2
+  exit 1
+fi
+for contract in "${guardian_contract[@]}"; do
+  if ! grep -Fq "$contract" skills/autonomous-project-run/SKILL.md; then
+    echo "guardian suppression contract is incomplete" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$contract" <<<"$index_skill"; then
+    echo "guardian suppression contract is incomplete in index" >&2
+    exit 1
+  fi
+done
+
+runtime_gate_contract=(
+  'scripts/runtime_gate.py'
+  'Successful probe, checkpoint, handoff, and `luna_bootstrap` validation returns `decision: evidence`, never `allow`'
+  'Any missing, blocked, malformed, or non-evidence result fails closed'
+  'pre_mutation'
+  'luna_bootstrap'
+)
+for contract in "${runtime_gate_contract[@]}"; do
+  if ! grep -Fq "$contract" skills/autonomous-project-run/SKILL.md; then
+    echo "runtime gate contract is incomplete" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$contract" <<<"$index_skill"; then
+    echo "runtime gate contract is incomplete in index" >&2
+    exit 1
+  fi
+done
+
+setup_preflight_contract=(
+  'scripts/setup_preflight.py --repo <target-repository>'
+  'automatically invoke the resolved official `setup-matt-pocock-skills` skill'
+  'Do not require the user to remember or manually invoke setup before APR'
+  'fail closed before Wayfinder, tracker access, ticket creation, or repository mutation'
+)
+for contract in "${setup_preflight_contract[@]}"; do
+  if ! grep -Fq "$contract" skills/autonomous-project-run/SKILL.md; then
+    echo "setup preflight contract is incomplete" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$contract" <<<"$index_skill"; then
+    echo "setup preflight contract is incomplete in index" >&2
+    exit 1
+  fi
+done
+
 required_skill_contracts=(
   'canonical requirements/spec revision and content digest'
   'path + source-state fingerprint + query'
@@ -121,11 +207,7 @@ for contract in "${required_skill_contracts[@]}"; do
     echo "required evidence or acceptance contract is missing" >&2
     exit 1
   fi
-  set +e
-  git show :skills/autonomous-project-run/SKILL.md | grep -Fq "$contract"
-  index_contract_status=$?
-  set -e
-  if [[ $index_contract_status -ne 0 ]]; then
+  if ! grep -Fq "$contract" <<<"$index_skill"; then
     echo "required evidence or acceptance contract is missing from index" >&2
     exit 1
   fi
@@ -189,5 +271,9 @@ while IFS= read -r file; do
 done < <(git ls-files)
 
 python3 scripts/check_markdown_links.py
+python3 -m unittest tests/test_guardian_policy.py
+python3 -m unittest tests/test_runtime_gate.py
+python3 -m unittest tests/test_runtime_probe.py
+python3 -m unittest tests/test_setup_preflight.py
 
 echo "validation passed"

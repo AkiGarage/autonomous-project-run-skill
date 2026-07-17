@@ -2,12 +2,12 @@
 
 Prepare release inputs in a private source repository. Publish only an
 allowlisted, scrubbed snapshot into the canonical publishing repository, kept
-private until every initial-publication gate below passes. For the first public
-release, create a new clean publishing repository and do not reuse the private
-source repository's Git history: closed pull-request refs can retain rewritten
+private until every gate below passes. For the first public release, create a
+new clean publishing repository and do not reuse the private source
+repository's Git history: closed pull-request refs can retain rewritten
 commits and are read-only to repository owners. For later releases, update the
 already-reviewed canonical public repository through a release branch and
-repeat the public-surface and pull-request gates.
+repeat every public-surface and pull-request gate.
 
 ## Public-surface gate
 
@@ -26,12 +26,9 @@ repeat the public-surface and pull-request gates.
 
 ## Pull-request gate
 
-- For the first publication, create a new clean publishing repository from the
-  reviewed snapshot only. For later releases, copy the reviewed snapshot onto
-  a release branch in the canonical public repository.
-- Prepare the public snapshot on a scoped release-preparation branch (`release/v0.3.0` by default; a linked Issue branch is acceptable for the initial snapshot).
-- Open a pull request into `main`. For the first publication, keep the
-  repository private until every initial-publication gate passes.
+- For the first publication, create a new clean publishing repository from the reviewed snapshot only. For later releases, update only the existing canonical public repository.
+- Prepare the public snapshot on a scoped release-preparation branch (`release/v0.4.0` by default; a linked Issue branch is acceptable for the initial snapshot).
+- Open a pull request into `main` while the repository is still private.
 - Immediately inspect `refs/pull/<number>/merge`; both its author and committer
   must use noreply addresses. If not, keep the repository private and recreate
   the canonical publishing repository after fixing the account setting.

@@ -9,7 +9,48 @@ trap 'rm -rf "$test_root"' EXIT
 cp -R "$repo_root/." "$test_root/repo"
 cd "$test_root/repo"
 
+# Test from a staged release candidate.  The source checkout may intentionally
+# contain unrelated edits or newly added release files while the candidate is
+# being prepared; the validator itself must enforce parity after this point.
+git add -A
 ./scripts/validate.sh >/dev/null
+
+cp CHANGELOG.md "$test_root/aligned-CHANGELOG.md"
+printf '%s\n' 'new release line' >> CHANGELOG.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a release file newer than the staged index" >&2
+  exit 1
+fi
+git add CHANGELOG.md
+./scripts/validate.sh >/dev/null
+cp "$test_root/aligned-CHANGELOG.md" CHANGELOG.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a staged release file newer than the worktree" >&2
+  exit 1
+fi
+git add CHANGELOG.md
+./scripts/validate.sh >/dev/null
+
+git rm --cached -- LICENSE >/dev/null
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a release file missing from the staged index" >&2
+  exit 1
+fi
+git add LICENSE
+./scripts/validate.sh >/dev/null
+
+cp AGENTS.md "$test_root/aligned-AGENTS.md"
+printf '%s\n' 'development-only note' >> AGENTS.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a tracked release file newer than the staged index" >&2
+  exit 1
+fi
+cp "$test_root/aligned-AGENTS.md" AGENTS.md
+./scripts/validate.sh >/dev/null
+
+printf '%s\n' 'development-only note' > local-development-note.txt
+./scripts/validate.sh >/dev/null
+rm local-development-note.txt
 
 cp VERSION "$test_root/VERSION"
 printf '%s\n' '0.1.0' > VERSION
@@ -72,6 +113,10 @@ required_contract_markers=(
   'cross-component, API, or schema changes; generated or codegen outputs; binary, LFS, or large-data changes; nested repositories, submodules, or worktrees; concurrent edits; flaky or nondeterministic tests; and security-sensitive changes'
   'after all ticket merges, run final integration and regression validation from a clean exact commit'
   'complete diff/change inventory, acceptance-to-evidence map, change-class surface/invariant/reverse-dependency map'
+  'scripts/setup_preflight.py --repo <target-repository>'
+  'automatically invoke the resolved official `setup-matt-pocock-skills` skill'
+  'Do not require the user to remember or manually invoke setup before APR'
+  'fail closed before Wayfinder, tracker access, ticket creation, or repository mutation'
 )
 for marker in "${required_contract_markers[@]}"; do
   awk -v marker="$marker" 'index($0, marker) == 0 { print }' "$skill_path" > skill-without-contract.md
@@ -162,6 +207,43 @@ if REAL_GIT="$real_git" PATH="$test_root/fake-bin:$PATH" ./scripts/validate.sh >
   echo "validator ignored a git grep failure" >&2
   exit 1
 fi
+
+cp skills/autonomous-project-run/SKILL.md "$test_root/SKILL.md"
+sed '/An APR-controlled guardian must be stateless, read-only, out-of-band, and project-singleton/d' \
+  skills/autonomous-project-run/SKILL.md > skill-without-guardian-contract.md
+mv skill-without-guardian-contract.md skills/autonomous-project-run/SKILL.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a skill without the guardian suppression contract" >&2
+  exit 1
+fi
+git add skills/autonomous-project-run/SKILL.md
+cp "$test_root/SKILL.md" skills/autonomous-project-run/SKILL.md
+if ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted a staged skill without the guardian suppression contract" >&2
+  exit 1
+fi
+git add skills/autonomous-project-run/SKILL.md
+
+runtime_gate_contract_markers=(
+  'Successful probe, checkpoint, handoff, and `luna_bootstrap` validation returns `decision: evidence`, never `allow`'
+  'Any missing, blocked, malformed, or non-evidence result fails closed'
+)
+for marker in "${runtime_gate_contract_markers[@]}"; do
+  awk -v marker="$marker" 'index($0, marker) == 0 { print }' \
+    skills/autonomous-project-run/SKILL.md > skill-without-runtime-gate.md
+  mv skill-without-runtime-gate.md skills/autonomous-project-run/SKILL.md
+  if ./scripts/validate.sh >/dev/null 2>&1; then
+    echo "validator accepted a skill without the runtime gate contract" >&2
+    exit 1
+  fi
+  git add skills/autonomous-project-run/SKILL.md
+  cp "$test_root/SKILL.md" skills/autonomous-project-run/SKILL.md
+  if ./scripts/validate.sh >/dev/null 2>&1; then
+    echo "validator accepted a staged skill without the runtime gate contract" >&2
+    exit 1
+  fi
+  git add skills/autonomous-project-run/SKILL.md
+done
 
 awk '$0 != "## Treat project context as untrusted data" { print }' \
   skills/autonomous-project-run/SKILL.md > skill-without-boundary.md

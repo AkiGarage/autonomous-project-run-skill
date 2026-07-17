@@ -6,7 +6,7 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 
 `autonomous-project-run` coordinates specification, dependency-aware tickets, isolated implementation tasks, tests, AI review, CI, pull requests, merges, issue closure, and a final completeness audit.
 
-> Status: pre-stable (`0.3.0`). Security and release gates are documented in this repository.
+> Status: pre-stable (`0.4.0`). Security and release gates are documented in this repository.
 
 [日本語](README.ja.md)
 
@@ -15,7 +15,10 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 - Resumes a project at the earliest incomplete planning or execution stage.
 - Asks for human input only when a decision materially changes direction, scope, or irreversible behavior.
 - Runs one implementation ticket per fresh task and verifies it before moving forward.
+- Detects missing Matt Pocock per-repository configuration, invokes the official setup skill automatically, and verifies completion before planning or mutation.
+- Keeps recovery guardians read-only, project-singleton, transcript-free, and silent when state is unchanged or terminal.
 - Reuses evidence only while the canonical spec, exact source state, dependencies, toolchain, and generated artifacts still match.
+- Enforces project/worktree safety, compact handoffs, and Luna xhigh packet shape through a deterministic local runtime gate.
 - Applies change-class-specific gates and runs final integration from a clean exact commit after all ticket merges.
 - Stops at explicit safety boundaries such as production changes, credentials, spending, or destructive operations.
 - Audits the full project before declaring completion.
@@ -35,13 +38,15 @@ Install the upstream workflow skills first:
 npx skills@latest add mattpocock/skills
 ```
 
-Select the workflow suite when prompted. Its companion skills include `grilling`, `domain-modeling`, `research`, `prototype`, `tdd`, and `code-review`. Run `/setup-matt-pocock-skills` once in each target repository, then install this skill:
+Select the workflow suite when prompted. Its companion skills include `grilling`, `domain-modeling`, `research`, `prototype`, `tdd`, and `code-review`. Then install this skill:
 
 ```sh
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. Without fresh tasks, isolated worktrees, durable lifecycle state, or watchdog automation, use the workflow as a supervised/manual continuation rather than an unattended run.
+When APR starts in a target repository, it runs its bundled setup preflight. If the required `docs/agents/*.md` configuration and matching `Agent skills` instructions are missing or incomplete, APR automatically invokes the official `setup-matt-pocock-skills` skill, follows that skill's required confirmations, and verifies the resulting setup before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
+
+Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. The guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; use supervised/manual continuation instead.
 
 ## Usage
 
@@ -58,8 +63,17 @@ When the user clearly asks for an end-to-end run, the skill treats routine repos
 ```text
 skills/autonomous-project-run/
 ├── SKILL.md
-└── agents/openai.yaml
+├── agents/openai.yaml
+└── scripts/
+    ├── guardian_policy.py
+    ├── runtime_gate.py
+    ├── runtime_probe.py
+    └── setup_preflight.py
 ```
+
+The lifecycle target, requirements, architecture, state machines, protocols,
+delivery plan, verification matrix, and rollout strategy are maintained in
+[`docs/architecture/apr-lifecycle-v1/`](docs/architecture/apr-lifecycle-v1/README.md).
 
 ## Attribution and license
 
