@@ -4,10 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-18
+
+### Added
+
+- Exact, fixture-backed host task-action request/result validation with fail-closed identity matching and read-after-write reconciliation.
+- A versioned lifecycle event reducer with strict nested-state validation and a restrictive, identity-bound external atomic registry store for ticket, external-action, and archive state.
+- Archive eligibility and retry transitions bound to exact-thread host-action readback that keep implementation completion, thread archival, and worktree cleanup orthogonal.
+
 ### Changed
 
+- Persist bounded native task timeout and capacity waits so the next verified host event can resume them without duplicate task creation or an added polling daemon.
+- Treat compaction as a durable checkpoint and require an evidence-bound safe handoff reason instead of stopping mechanically after a fixed count.
+- Accept linked project checkouts and exact managed worktrees only when probe-derived repository identity, owner evidence, and host capability agree.
+- Reject ambiguous nested repositories, unsafe path spellings, sensitive handoff fields, and caller-supplied ownership or lifecycle evidence.
 - Require affirmative user intent for host activation; negated, quoted, documentation, configuration, inspection, and review-only mentions no longer activate APR.
 - Keep live leases exclusive and allow expired cross-session ownership reconciliation only through the new session's trusted affirmative APR `UserPromptSubmit`; ordinary `Stop` and caller-supplied evidence cannot release or transfer ownership.
+- Build public-surface validation fixtures from the staged index so linked-worktree metadata and ignored runtime state cannot enter a release candidate.
 
 ## [0.4.0] - 2026-07-15
 

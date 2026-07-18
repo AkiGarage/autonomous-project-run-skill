@@ -28,7 +28,7 @@ MAX_INPUT_BYTES = 64 * 1024
 MAX_PACKET_BYTES = 12 * 1024
 MAX_OUTPUT_CAP = 6000
 MAX_STRING_LENGTH = 4096
-MAX_NESTING_DEPTH = 64
+MAX_NESTED_DEPTH = 64
 DIGEST_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 IDENTIFIER_RE = re.compile(r"[A-Za-z0-9._:/@+-]{1,128}\Z")
 
@@ -112,6 +112,12 @@ def _within(path: str, parent: str) -> bool:
         return os.path.commonpath((path, parent)) == parent
     except ValueError:
         return False
+
+
+def _repo_identity_binds_common_dir(project: str, common_dir: str, identity: str) -> bool:
+    """Bind an external Git common dir to the canonical probe identity."""
+    expected = hashlib.sha256(f"{project}\0{common_dir}".encode()).hexdigest()
+    return hmac.compare_digest(identity.lower(), expected)
 
 
 def _managed_worktree_root(path: str, managed_root: str) -> bool:
@@ -414,33 +420,25 @@ def _read_supervisor_stream(fd: int, limit: int, code: str) -> bytes:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 _error(code)
-            try:
-                events = selector.select(remaining)
-            except OSError:
-                _error(code)
-            if not events:
-                _error(code)
             read_size = min(SUPERVISOR_STREAM_CHUNK_BYTES, limit + 1 - len(value))
             try:
                 chunk = os.read(fd, read_size)
             except OSError as error:
                 if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    # Some FIFO selector implementations can miss an edge
+                    # when a split writer closes between registration and the
+                    # next wait. Probe the non-blocking descriptor on every
+                    # bounded tick so a missed notification cannot turn valid
+                    # supervisor data into a false safety block.
+                    try:
+                        selector.select(min(remaining, 0.05))
+                    except OSError:
+                        _error(code)
                     continue
                 _error(code)
             if not chunk:
                 return bytes(value)
             value.extend(chunk)
-            if len(value) > limit:
-                _error(code)
-            try:
-                marker = os.read(fd, 1)
-            except OSError as error:
-                if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                    continue
-                _error(code)
-            if not marker:
-                return bytes(value)
-            value.extend(marker)
             if len(value) > limit:
                 _error(code)
     finally:
@@ -799,11 +797,15 @@ def _validate_pre_mutation(record: dict[str, Any]) -> dict[str, Any]:
     if operation == "prepare_worktree" and not _within(cwd, worktree):
         _error("cwd_mismatch")
     common_dir = record.get("_repo_common_dir")
-    # Git's common directory is either the project root (bare layout) or a
-    # physical descendant such as <project>/.git for linked worktrees.  A
-    # parent directory is deliberately rejected: it cannot bind this record
-    # to the project named by the caller.
-    if common_dir is not None and not _within(common_dir, project):
+    # A linked Codex project can legitimately share a common Git directory
+    # outside its physical project boundary.  Accept that topology only when
+    # the probe-derived repo identity binds the exact canonical project/common
+    # pair already checked by owner evidence and the supervisor capability.
+    if (
+        common_dir is not None
+        and not _within(common_dir, project)
+        and not _repo_identity_binds_common_dir(project, common_dir, identity)
+    ):
         _error("repo_mismatch")
 
     return {
@@ -828,6 +830,7 @@ CHECKPOINT_KEYS = {
     "generation", "checkpoint_generation", "hash", "checkpoint_hash", "successor_count", "successors",
     "acknowledgement", "ack", "acknowledgement_state", "status", "owner", "lease", "ticket", "phase",
     "pending_action", "unknown_outcome", "dirty_state", "validation", "negative_evidence", "handoff_payload",
+    "handoff_trigger",
 }
 ATOMIC_KEYS = {
     "generation", "hash", "atomic", "committed", "created", "acknowledgement", "ack", "successor_count",
@@ -839,19 +842,27 @@ FINGERPRINT_KEYS = {
 }
 
 
-def _reject_transcript_keys(value: Any) -> None:
-    stack = [(value, 0)]
+def _nested_keys(value: Any):
+    """Iterate JSON object keys with a fail-closed depth and key-type bound."""
+    stack: list[tuple[Any, int]] = [(value, 0)]
     while stack:
         current, depth = stack.pop()
-        if depth > MAX_NESTING_DEPTH:
-            _error("nested_too_deep")
+        if depth > MAX_NESTED_DEPTH:
+            _error("context_too_deep")
         if isinstance(current, dict):
             for key, child in current.items():
-                if any(token in key.lower() for token in ("transcript", "raw_log", "prompt", "message", "conversation")):
-                    _error("forbidden_context")
+                if not isinstance(key, str):
+                    _error("invalid_schema")
+                yield key
                 stack.append((child, depth + 1))
         elif isinstance(current, list):
             stack.extend((child, depth + 1) for child in current)
+
+
+def _reject_transcript_keys(value: Any) -> None:
+    for key in _nested_keys(value):
+        if any(token in key.lower() for token in ("transcript", "raw_log", "prompt", "message", "conversation")):
+            _error("forbidden_context")
 
 
 def _checkpoint_record(payload: dict[str, Any]) -> dict[str, Any]:
@@ -926,18 +937,88 @@ HANDOFF_LEASE_KEYS = {
 HANDOFF_PROCESS_KEYS = {"pid", "state"}
 HANDOFF_LOCK_KEYS = {"path", "held", "fencing_token"}
 
+HANDOFF_TRIGGER_REASONS = frozenset({
+    "natural_phase_boundary",
+    "ineffective_compaction",
+    "unrecoverable_context_pressure",
+})
+HANDOFF_TRIGGER_KEYS = {"reason", "evidence", "safe_checkpoint"}
+MAX_HANDOFF_TRIGGER_DEPTH = MAX_NESTED_DEPTH
+HANDOFF_TRIGGER_FORBIDDEN_KEY_TOKENS = (
+    "transcript", "raw_log", "prompt", "message", "conversation",
+    "secret", "password", "api_key", "credential", "access_token",
+    "private_key", "authorization", "bearer",
+)
+
+
+def _validate_deterministic_evidence(value: Any) -> None:
+    """Accept bounded JSON evidence without recursion or sensitive context."""
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > MAX_HANDOFF_TRIGGER_DEPTH:
+            _error("handoff_trigger_too_deep")
+        if isinstance(current, dict):
+            if not current:
+                _error("missing_handoff_trigger_evidence")
+            for key, child in current.items():
+                if not isinstance(key, str):
+                    _error("invalid_handoff_trigger_evidence")
+                _identifier(key, "invalid_handoff_trigger_evidence")
+                lowered = key.lower()
+                if any(token in lowered for token in HANDOFF_TRIGGER_FORBIDDEN_KEY_TOKENS):
+                    _error("forbidden_context")
+                stack.append((child, depth + 1))
+            continue
+        if isinstance(current, list):
+            stack.extend((child, depth + 1) for child in current)
+            continue
+        if current is None or type(current) is bool or type(current) is int or type(current) is str:
+            continue
+        _error("invalid_handoff_trigger_evidence")
+
+
+def validate_handoff_trigger(value: Any) -> dict[str, Any]:
+    """Validate the bounded, deterministic reason for one safe handoff."""
+    trigger = _map(value, "invalid_handoff_trigger")
+    if set(trigger) != HANDOFF_TRIGGER_KEYS:
+        _error("invalid_handoff_trigger")
+    reason = _string(trigger.get("reason"), "invalid_handoff_trigger_reason")
+    if reason not in HANDOFF_TRIGGER_REASONS:
+        _error("invalid_handoff_trigger_reason")
+    if type(trigger.get("safe_checkpoint")) is not bool:
+        _error("invalid_handoff_trigger_checkpoint")
+    if trigger["safe_checkpoint"] is not True:
+        _error("unsafe_handoff_checkpoint")
+    evidence = trigger.get("evidence")
+    if not isinstance(evidence, dict) or not evidence:
+        _error("missing_handoff_trigger_evidence")
+    _validate_deterministic_evidence(evidence)
+    try:
+        canonical = json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        _error("invalid_handoff_trigger_evidence")
+    if len(canonical) > MAX_PACKET_BYTES:
+        _error("handoff_trigger_too_large")
+    return {
+        "reason": reason,
+        "evidence": json.loads(canonical.decode("utf-8")),
+        "safe_checkpoint": True,
+        "evidence_digest": hashlib.sha256(canonical).hexdigest(),
+    }
+
 
 def _reject_sensitive_keys(value: Any) -> None:
     """Keep durable handoffs bounded and free of credentials or secret blobs."""
-    if isinstance(value, dict):
-        for key, child in value.items():
-            lowered = key.lower()
-            if any(token in lowered for token in ("secret", "password", "api_key", "credential")):
-                _error("forbidden_context")
-            _reject_sensitive_keys(child)
-    elif isinstance(value, list):
-        for child in value:
-            _reject_sensitive_keys(child)
+    for key in _nested_keys(value):
+        lowered = key.lower()
+        if any(token in lowered for token in (
+            "secret", "password", "api_key", "credential", "access_token",
+            "private_key", "authorization", "bearer",
+        )):
+            _error("forbidden_context")
 
 
 def _validate_handoff_sections(record: dict[str, Any], handoff: dict[str, Any], generation: int) -> None:
@@ -1280,8 +1361,12 @@ def _validate_checkpoint(payload: dict[str, Any], action: str) -> dict[str, Any]
         if len(authorities) != 1:
             _error("invalid_compactions")
         compactions = compactions[authorities[0]]
-    if compactions is not None and _integer(compactions, "invalid_compactions") > 1:
-        _error("second_compaction")
+    if compactions is not None:
+        _integer(compactions, "invalid_compactions")
+    trigger = record.get("handoff_trigger")
+    if action == "handoff" and trigger is None:
+        _error("missing_handoff_trigger")
+    trigger_result = validate_handoff_trigger(trigger) if trigger is not None else None
     for stale_key in ("stale", "checkpoint_stale", "fresh"):
         if stale_key in record and type(record[stale_key]) is not bool:
             _error("invalid_stale")
@@ -1337,7 +1422,7 @@ def _validate_checkpoint(payload: dict[str, Any], action: str) -> dict[str, Any]
     )
     if action == "handoff" and acknowledgement == "pending":
         _error("successor_not_acknowledged")
-    return {
+    result = {
         "decision": "allow",
         "code": f"{action}_allowed",
         "action": action,
@@ -1350,6 +1435,9 @@ def _validate_checkpoint(payload: dict[str, Any], action: str) -> dict[str, Any]
         "ticket": ticket,
         "phase": phase,
     }
+    if trigger_result is not None:
+        result["handoff_trigger"] = trigger_result
+    return result
 
 
 PACKET_KEYS = {

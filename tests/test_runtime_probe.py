@@ -123,7 +123,14 @@ class RuntimeProbeTests(unittest.TestCase):
 
     def run_probe(self, extra: dict | None = None, cwd: Path | None = None) -> tuple[int, dict]:
         cwd = cwd or self.repo
-        evidence_path = Path(str(self.repo / ".codex" / "owner-evidence.json"))
+        checkout = Path(subprocess.check_output(
+            ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], text=True,
+        ).strip()).resolve()
+        if checkout.parent.name == "worktrees" and checkout.parent.parent.name == ".codex":
+            evidence_project = checkout.parent.parent.parent
+        else:
+            evidence_project = self.repo.resolve()
+        evidence_path = evidence_project / ".codex" / "owner-evidence.json"
         lock_path = Path(tempfile.gettempdir()) / f"apr-probe-lock-{os.getpid()}-{id(self)}.lock"
         lock_path.touch(exist_ok=True)
         os.chmod(lock_path, 0o600)
@@ -291,6 +298,64 @@ class RuntimeProbeTests(unittest.TestCase):
         status, output = self.run_probe(cwd=linked)
         self.assertEqual(status, 2)
         self.assertEqual(output["code"], "external_worktree")
+
+    def test_managed_worktree_uses_registered_physical_project_root(self) -> None:
+        project = Path(self.temp.name) / "linked-project"
+        subprocess.run(
+            ["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "project-test", str(project)],
+            check=True,
+        )
+        managed = project / ".codex" / "worktrees" / "owner"
+        managed.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "-C", str(project), "worktree", "add", "-q", "-b", "managed-test", str(managed)],
+            check=True,
+        )
+
+        facts = runtime_probe.collect(managed)
+
+        self.assertEqual(facts["project_root"], str(project.resolve()))
+        self.assertEqual(facts["worktree"], str(managed.resolve()))
+        self.assertEqual(facts["common_dir"], str((self.repo / ".git").resolve()))
+
+        status, output = self.run_probe(cwd=managed)
+        self.assertEqual(status, 0)
+        self.assertEqual(output["decision"], "evidence")
+        self.assertEqual(output["code"], "pre_mutation_evidence_valid")
+
+    def test_managed_worktree_rejects_unregistered_physical_project_root(self) -> None:
+        project = Path(self.temp.name) / "linked-project"
+        managed = project / ".codex" / "worktrees" / "owner"
+
+        with self.assertRaisesRegex(runtime_probe.ProbeError, "ambiguous_project_root"):
+            runtime_probe._project_root(
+                str(managed),
+                str((self.repo / ".git").resolve()),
+                [str(self.repo.resolve()), str(managed.resolve())],
+            )
+
+    def test_main_probe_excludes_registered_nested_managed_worktree_marker(self) -> None:
+        managed = self.repo / ".codex" / "worktrees" / "owner"
+        managed.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "worktree", "add", "-q", "-b", "managed-owner", str(managed)],
+            check=True,
+        )
+        marker = subprocess.check_output(
+            ["git", "-C", str(self.repo), "ls-files", "--others", "--exclude-standard", "-z"],
+        )
+        self.assertEqual(marker, b".codex/worktrees/owner/\0")
+
+        facts = runtime_probe.collect(self.repo)
+
+        self.assertFalse(facts["dirty_state"]["untracked"])
+
+    def test_main_probe_rejects_unregistered_nested_repository_marker(self) -> None:
+        nested = self.repo / "unregistered"
+        subprocess.run(["git", "init", "-q", str(nested)], check=True)
+
+        with self.assertRaisesRegex(runtime_probe.ProbeError, "untracked_nested_repository"):
+            runtime_probe.collect(self.repo)
 
     def test_rejects_bare_repository(self) -> None:
         bare = Path(self.temp.name) / "bare.git"

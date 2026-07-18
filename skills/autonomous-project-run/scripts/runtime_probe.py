@@ -435,28 +435,55 @@ def _real(value: str) -> str:
     return os.path.realpath(os.path.abspath(value))
 
 
-def _project_root(cwd: Path, worktree: str, common_dir: str) -> str:
-    lines = _git(cwd, "worktree", "list", "--porcelain").splitlines()
-    roots = [_real(line.removeprefix("worktree ")) for line in lines if line.startswith("worktree ")]
+def _registered_worktree_roots(cwd: Path) -> list[str]:
+    fields = _git_bytes(cwd, "worktree", "list", "--porcelain", "-z").split(b"\0")
+    roots = [
+        _real(os.fsdecode(field.removeprefix(b"worktree ")))
+        for field in fields
+        if field.startswith(b"worktree ")
+    ]
     if not roots:
         raise ProbeError("git_probe_failed")
+    return roots
+
+
+def _project_root(worktree: str, common_dir: str, roots: list[str]) -> str:
     managed_marker = f"{os.sep}.codex{os.sep}worktrees{os.sep}"
+    normalized_worktree = _real(worktree)
+    normalized_roots = {_real(root) for root in roots}
+    managed_parent = Path(normalized_worktree).parent
+    if managed_parent.name == "worktrees" and managed_parent.parent.name == ".codex":
+        candidate = _real(str(managed_parent.parent.parent))
+        if managed_marker in candidate or candidate not in normalized_roots:
+            raise ProbeError("ambiguous_project_root")
+        return candidate
     common_path = Path(common_dir)
     common_candidate = _real(str(common_path.parent)) if common_path.name == ".git" else None
-    candidate = common_candidate if common_candidate in roots else roots[0]
+    candidate = common_candidate if common_candidate in normalized_roots else _real(roots[0])
     if managed_marker in candidate:
         raise ProbeError("ambiguous_project_root")
     return candidate
 
 
-def _filter_untracked(worktree: str, raw: bytes, excluded_paths: set[str]) -> bytes:
-    if not excluded_paths:
-        return raw
+def _filter_untracked(
+    worktree: str,
+    raw: bytes,
+    excluded_paths: set[str],
+    registered_worktrees: set[str],
+) -> bytes:
     excluded = {_real(path) for path in excluded_paths}
     kept: list[bytes] = []
     for entry in raw.split(b"\0"):
         if not entry:
             continue
+        if entry.endswith(b"/"):
+            marker = entry[:-1]
+            _path_components(marker)
+            marker_path = _real(os.path.join(worktree, os.fsdecode(marker)))
+            if marker_path in registered_worktrees and marker_path != _real(worktree):
+                continue
+            raise ProbeError("untracked_nested_repository")
+        _path_components(entry)
         relative = os.fsdecode(entry)
         absolute = _real(os.path.join(worktree, relative))
         if absolute not in excluded:
@@ -472,7 +499,8 @@ def collect(cwd: Path | None = None, *, exclude_paths: set[str] | None = None) -
     worktree = _real(_git(cwd, "rev-parse", "--show-toplevel"))
     common_raw = _git(cwd, "rev-parse", "--git-common-dir")
     common_dir = _real(common_raw if os.path.isabs(common_raw) else os.path.join(worktree, common_raw))
-    project = _project_root(cwd, worktree, common_dir)
+    registered_worktrees = _registered_worktree_roots(cwd)
+    project = _project_root(worktree, common_dir, registered_worktrees)
     head = _git(cwd, "rev-parse", "HEAD")
     branch = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
     identity = hashlib.sha256(f"{project}\0{common_dir}".encode()).hexdigest()
@@ -489,6 +517,7 @@ def collect(cwd: Path | None = None, *, exclude_paths: set[str] | None = None) -
             max_output_bytes=MAX_UNTRACKED_LIST_BYTES,
         ),
         exclude_paths or set(),
+        set(registered_worktrees),
     )
     tree = _git(cwd, "rev-parse", "HEAD^{tree}")
     index_digest = _digest(index_bytes)

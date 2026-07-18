@@ -6,7 +6,7 @@
 
 `autonomous-project-run` は、仕様化、依存関係付きチケット、作業を分離した実装、テスト、AIレビュー、CI、Pull Request、マージ、Issueの完了確認、最終監査までをまとめて進行します。
 
-> 状態：pre-stable（`0.4.0`）。セキュリティとreleaseのgateは本リポジトリに記載しています。
+> 状態：pre-stable（`0.5.0`）。セキュリティとreleaseのgateは本リポジトリに記載しています。
 
 [English](README.md)
 
@@ -15,10 +15,14 @@
 - 計画や実装の途中からでも、最初に残っている工程を見つけて再開します。
 - 方向性、範囲、取り消せない操作に関わる重要な判断だけを人に確認します。
 - 1つの実装チケットを1つの新しいtaskで扱い、検証してから次へ進みます。
-- 仕様作成、TDD、code reviewなどの補助workflowを対象プロジェクトですぐ使えるか起動時に確認し、準備が足りなければ公式setup skillで自動的に整えます。
+- compactionは永続checkpointとreplanの合図として扱い、回数だけを理由に機械的に停止しません。
+- native task callを有限時間に区切り、timeout/capacity待ちを永続化し、taskを重複作成したりpolling daemonを追加したりせず、次の実host eventで再開します。
+- Matt Pocock氏のリポジトリ別設定が不足していないか確認し、公式setup skillを自動で呼び出して、計画や変更の前に完了を再検証します。
 - recovery guardianをread-only、project-singleton、transcript非継承とし、状態に変更がない場合やterminal状態では何も出力しません。
 - 正式な仕様、正確なsource state、dependencies、toolchain、生成物が一致する間だけ既存のevidenceを再利用します。
 - project/worktreeの安全性、短いhandoff、Luna xhighの依頼形式を、決定的なlocal runtime gateで強制します。
+- host task actionの完全一致するidentityを検証し、raw promptを保存せずに、永続request/resultのreconciliationをfail-closedにします。
+- versioned lifecycle eventをproject外のatomic registryへreduceし、archiveのretry stateをworktree cleanupから分離します。
 - 変更の種類ごとの追加検査を行い、全チケットのmerge後に、汚れのない正確なcommitから最終統合テストを実行します。
 - production変更、credentials、支払い、破壊的操作など、明示された安全境界で停止します。
 - 全チケットを横断して監査し、本当に完了しているか確認します。
@@ -28,7 +32,7 @@
 - Agent Skillsに対応したcoding agent
 - 全工程を使う場合は、GitHubリポジトリと認証済みの `gh` CLI
 - Matt Pocock氏のworkflow skill suite（`setup-matt-pocock-skills`、`wayfinder`、`to-spec`、`to-tickets`、`implement` を含む）
-- 無人で複数Issueを進める場合は、新しいtask/threadの作成、分離されたworktree、永続化したlifecycle state、singleton watchdogの仕組み
+- native task/thread lifecycle controls、分離されたworktree、永続化したlifecycle state。無人復旧には、検証済みschedulerまたは次の実host eventの配送が必要で、追加のpolling daemonは不要です
 - hostが提供する場合はsafe-continuation handoff。ない場合は、検証済みの最小handoffを使い、正式なstateを独立して再確認できること
 - Codexのレビューゲートを使う場合は `codex-autoreview`
 
@@ -44,9 +48,9 @@ npx skills@latest add mattpocock/skills
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-APRを対象リポジトリで起動すると、仕様作成、TDD、code reviewなどの補助workflowを使う準備が整っているか確認します。必要な設定ファイルや `Agent Skills` の指示が不足・不完全な場合は、公式の `setup-matt-pocock-skills` skillを自動で呼び出し、そのskillが求める確認を行ったうえで、準備が完了したことを再検証してから続行します。事前に `/setup-matt-pocock-skills` を手動実行しておく必要はありません。
+APRは対象リポジトリで起動すると、同梱のsetup preflightを実行します。必要な `docs/agents/*.md` 設定や対応する `Agent skills` の指示が不足・不完全な場合は、公式の `setup-matt-pocock-skills` skillを自動で呼び出し、そのskillが求める確認を行ったうえで、設定完了を再検証してから続行します。事前に `/setup-matt-pocock-skills` を手動実行しておく必要はありません。
 
-入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。Guardianにはsingleton ownership、boundedなstate-only input、transcript非継承、変更なし・terminal状態での無出力が必要です。hostがこれらを強制できない場合、本スキルはguardianを追加せず、人が確認しながら手動で継続します。
+入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。任意のGuardianにはsingleton ownership、boundedなstate-only input、transcript非継承、変更なし・terminal状態での無出力が必要です。hostがこれらを強制できない場合、本スキルはguardianを追加せず、永続化されたforeground ownerが継続し、次の検証済みhost eventで復旧します。
 
 ## 使い方
 
@@ -66,6 +70,8 @@ skills/autonomous-project-run/
 ├── agents/openai.yaml
 └── scripts/
     ├── guardian_policy.py
+    ├── host_actions.py
+    ├── lifecycle_registry.py
     ├── runtime_gate.py
     ├── runtime_probe.py
     └── setup_preflight.py

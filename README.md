@@ -6,7 +6,7 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 
 `autonomous-project-run` coordinates specification, dependency-aware tickets, isolated implementation tasks, tests, AI review, CI, pull requests, merges, issue closure, and a final completeness audit.
 
-> Status: pre-stable (`0.4.0`). Security and release gates are documented in this repository.
+> Status: pre-stable (`0.5.0`). Security and release gates are documented in this repository.
 
 [日本語](README.ja.md)
 
@@ -15,10 +15,14 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 - Resumes a project at the earliest incomplete planning or execution stage.
 - Asks for human input only when a decision materially changes direction, scope, or irreversible behavior.
 - Runs one implementation ticket per fresh task and verifies it before moving forward.
-- Checks at startup whether the target project is ready to use companion workflows such as specification, TDD, and code review; if not, it uses the official setup skill to prepare them automatically.
+- Treats compaction as a durable checkpoint and replan signal, never as a mechanical stop condition.
+- Bounds native task calls, persists timeout/capacity waits, and resumes them on the next real host event without duplicating a task or requiring a polling daemon.
+- Detects missing Matt Pocock per-repository configuration, invokes the official setup skill automatically, and verifies completion before planning or mutation.
 - Keeps recovery guardians read-only, project-singleton, transcript-free, and silent when state is unchanged or terminal.
 - Reuses evidence only while the canonical spec, exact source state, dependencies, toolchain, and generated artifacts still match.
 - Enforces project/worktree safety, compact handoffs, and Luna xhigh packet shape through a deterministic local runtime gate.
+- Validates exact host task-action identities and keeps durable request/result reconciliation fail-closed without storing raw prompts.
+- Reduces versioned lifecycle events into an atomic external registry, with archive retry state kept separate from worktree cleanup.
 - Applies change-class-specific gates and runs final integration from a clean exact commit after all ticket merges.
 - Stops at explicit safety boundaries such as production changes, credentials, spending, or destructive operations.
 - Audits the full project before declaring completion.
@@ -28,7 +32,7 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 - A skills-compatible coding agent
 - A GitHub-backed project and authenticated `gh` CLI for the full workflow
 - Matt Pocock's workflow skill suite, including `setup-matt-pocock-skills`, `wayfinder`, `to-spec`, `to-tickets`, and `implement`
-- Fresh task/thread creation, isolated worktrees, durable lifecycle state, and a singleton watchdog mechanism for unattended multi-ticket runs
+- Native task/thread lifecycle controls, isolated worktrees, and durable lifecycle state; unattended recovery needs either a verified scheduler or delivery of the next real host event, not an added polling daemon
 - A safe-continuation handoff facility when the host provides one; otherwise use a validated minimal handoff and independently recheck authoritative state
 - `codex-autoreview` when the Codex review gate is enabled
 
@@ -44,9 +48,9 @@ Select the workflow suite when prompted. Its companion skills include `grilling`
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-When APR starts in a target repository, it checks whether companion workflows such as specification, TDD, and code review are ready to use. If required configuration files or matching `Agent Skills` instructions are missing or incomplete, APR invokes the official `setup-matt-pocock-skills` skill automatically, follows that skill's required confirmations, and verifies that setup is complete before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
+When APR starts in a target repository, it runs its bundled setup preflight. If the required `docs/agents/*.md` configuration and matching `Agent skills` instructions are missing or incomplete, APR automatically invokes the official `setup-matt-pocock-skills` skill, follows that skill's required confirmations, and verifies the resulting setup before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
 
-Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. The guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; use supervised/manual continuation instead.
+Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. An optional guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; the durable foreground owner continues and the next verified host event performs recovery.
 
 ## Usage
 
@@ -66,6 +70,8 @@ skills/autonomous-project-run/
 ├── agents/openai.yaml
 └── scripts/
     ├── guardian_policy.py
+    ├── host_actions.py
+    ├── lifecycle_registry.py
     ├── runtime_gate.py
     ├── runtime_probe.py
     └── setup_preflight.py

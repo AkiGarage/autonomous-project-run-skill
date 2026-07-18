@@ -2,6 +2,14 @@
 
 set -euo pipefail
 
+case "${APR_VALIDATE_SURFACE_ONLY:-0}" in
+  0|1) ;;
+  *)
+    echo "APR_VALIDATE_SURFACE_ONLY must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
+
 required_files=(
   README.md
   README.ja.md
@@ -15,15 +23,23 @@ required_files=(
   scripts/check_markdown_links.py
   tests/validate-public-surface.sh
   tests/test_guardian_policy.py
+  tests/test_host_actions.py
+  tests/test_lifecycle_registry.py
+  tests/test_apr_policy_contract.py
   tests/test_runtime_gate.py
+  tests/test_runtime_gate_policy.py
   tests/test_runtime_probe.py
   tests/test_setup_preflight.py
   skills/autonomous-project-run/SKILL.md
   skills/autonomous-project-run/agents/openai.yaml
   skills/autonomous-project-run/scripts/guardian_policy.py
+  skills/autonomous-project-run/scripts/host_actions.py
+  skills/autonomous-project-run/scripts/lifecycle_registry.py
   skills/autonomous-project-run/scripts/runtime_gate.py
   skills/autonomous-project-run/scripts/runtime_probe.py
   skills/autonomous-project-run/scripts/setup_preflight.py
+  tests/fixtures/host-actions-v1.json
+  docs/architecture/apr-lifecycle-v1/09-PHASE-0-BASELINE.md
 )
 
 # The release snapshot is built from the index.  Every index-tracked path is
@@ -201,6 +217,8 @@ required_skill_contracts=(
   'cross-component, API, or schema changes; generated or codegen outputs; binary, LFS, or large-data changes; nested repositories, submodules, or worktrees; concurrent edits; flaky or nondeterministic tests; and security-sensitive changes'
   'after all ticket merges, run final integration and regression validation from a clean exact commit'
   'complete diff/change inventory, acceptance-to-evidence map, change-class surface/invariant/reverse-dependency map'
+  'Exact fixture-backed tool identities are accepted; unmatched aliases fail closed'
+  'Archive failure or unknown outcome remains `archive_pending`'
 )
 for contract in "${required_skill_contracts[@]}"; do
   if ! grep -Fq "$contract" skills/autonomous-project-run/SKILL.md; then
@@ -271,9 +289,16 @@ while IFS= read -r file; do
 done < <(git ls-files)
 
 python3 scripts/check_markdown_links.py
-python3 -m unittest tests/test_guardian_policy.py
-python3 -m unittest tests/test_runtime_gate.py
-python3 -m unittest tests/test_runtime_probe.py
-python3 -m unittest tests/test_setup_preflight.py
-
-echo "validation passed"
+if [[ "${APR_VALIDATE_SURFACE_ONLY:-0}" == 0 ]]; then
+  python3 -m unittest tests/test_guardian_policy.py
+  python3 -m unittest tests/test_host_actions.py
+  python3 -m unittest tests/test_lifecycle_registry.py
+  python3 -m unittest tests/test_apr_policy_contract.py
+  python3 -m unittest tests/test_runtime_gate.py
+  python3 -m unittest tests/test_runtime_gate_policy.py
+  python3 -m unittest tests/test_runtime_probe.py
+  python3 -m unittest tests/test_setup_preflight.py
+  echo "validation passed"
+else
+  echo "public surface validation passed"
+fi
