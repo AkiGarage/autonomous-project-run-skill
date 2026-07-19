@@ -2,85 +2,123 @@
 
 ![Autonomous Project Run — Escape AI babysitting](assets/readme/hero-en.png)
 
-Take a multi-ticket GitHub project from an unclear goal to a verified result with minimal supervision.
+Autonomous Project Run (APR) helps a coding agent carry a multi-issue GitHub
+project from an unclear goal to a verified finish—with fewer check-ins from you.
 
-`autonomous-project-run` coordinates specification, dependency-aware tickets, isolated implementation tasks, tests, AI review, CI, pull requests, merges, issue closure, and a final completeness audit.
+You describe the outcome. APR works out what remains, handles the routine GitHub
+workflow, checks its work, and asks you only when a real decision or safety
+boundary needs your input.
 
-> Status: pre-stable (`0.4.0`). Security and release gates are documented in this repository.
+> **Early release:** `v0.5.0` is not yet stable. Try it first on a repository
+> where your work is committed or backed up.
 
 [日本語](README.ja.md)
 
-## What it does
+## When it helps
 
-- Resumes a project at the earliest incomplete planning or execution stage.
-- Asks for human input only when a decision materially changes direction, scope, or irreversible behavior.
-- Runs one implementation ticket per fresh task and verifies it before moving forward.
-- Checks at startup whether the target project is ready to use companion workflows such as specification, TDD, and code review; if not, it uses the official setup skill to prepare them automatically.
-- Keeps recovery guardians read-only, project-singleton, transcript-free, and silent when state is unchanged or terminal.
-- Reuses evidence only while the canonical spec, exact source state, dependencies, toolchain, and generated artifacts still match.
-- Enforces project/worktree safety, compact handoffs, and Luna xhigh packet shape through a deterministic local runtime gate.
-- Applies change-class-specific gates and runs final integration from a clean exact commit after all ticket merges.
-- Stops at explicit safety boundaries such as production changes, credentials, spending, or destructive operations.
-- Audits the full project before declaring completion.
+APR is useful when:
 
-## Requirements
+- a project has several related Issues or an unfinished implementation plan;
+- work may take longer than one coding-agent task;
+- you want tests, reviews, pull requests, merges, and Issue closure checked as
+  one continuous job;
+- you are tired of repeatedly asking an agent to continue or reminding it what
+  was already finished.
 
-- A skills-compatible coding agent
-- A GitHub-backed project and authenticated `gh` CLI for the full workflow
-- Matt Pocock's workflow skill suite, including `setup-matt-pocock-skills`, `wayfinder`, `to-spec`, `to-tickets`, and `implement`
-- Fresh task/thread creation, isolated worktrees, durable lifecycle state, and a singleton watchdog mechanism for unattended multi-ticket runs
-- A safe-continuation handoff facility when the host provides one; otherwise use a validated minimal handoff and independently recheck authoritative state
-- `codex-autoreview` when the Codex review gate is enabled
+## What you can expect
 
-Install the upstream workflow skills first:
+- **Starts from the real current state.** APR checks the repository and GitHub,
+  finds the earliest unfinished step, and avoids repeating completed work.
+- **Keeps work separated.** Each implementation Issue gets its own task,
+  branch, and separate Git work folder (a worktree), so unrelated changes do
+  not get mixed together.
+- **Recovers from interruptions.** It saves verified progress and resumes from
+  that point instead of asking you to reopen the project or repeat the request.
+- **Avoids duplicate actions.** Before creating tasks, opening pull requests,
+  merging, or closing Issues, it checks whether the action already happened.
+- **Checks before moving on.** Tests, code review, CI, and the exact commit are
+  verified at the relevant stage.
+- **Finishes with a project-wide audit.** APR checks that every promised Issue
+  is accounted for before it says the project is complete.
+
+Long conversations sometimes need to be shortened by the coding app. APR saves
+its place and reviews the remaining work when that happens; the shortening by
+itself is not treated as a reason to abandon the job.
+
+## Install
+
+APR builds on the workflow skills from
+[`mattpocock/skills`](https://github.com/mattpocock/skills). Install those first:
 
 ```sh
 npx skills@latest add mattpocock/skills
 ```
 
-Select the workflow suite when prompted. Its companion skills include `grilling`, `domain-modeling`, `research`, `prototype`, `tdd`, and `code-review`. Then install this skill:
+Choose the workflow suite when prompted. Then install APR:
 
 ```sh
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-When APR starts in a target repository, it checks whether companion workflows such as specification, TDD, and code review are ready to use. If required configuration files or matching `Agent Skills` instructions are missing or incomplete, APR invokes the official `setup-matt-pocock-skills` skill automatically, follows that skill's required confirmations, and verifies that setup is complete before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
+For the full workflow, you also need a coding app that supports Agent Skills, a
+GitHub repository, and an authenticated `gh` CLI.
 
-Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. The guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; use supervised/manual continuation instead.
+When APR starts in a repository, it checks the required project setup. If the
+Matt Pocock workflow configuration is missing, APR runs the official setup skill
+and verifies the result before it plans or changes code. You do not need to run
+`/setup-matt-pocock-skills` in advance.
 
-## Usage
+## Use it
 
-Invoke the skill with a repository and the outcome you want:
-
-```text
-Use $autonomous-project-run to take this project to completion with minimal supervision.
-```
-
-When the user clearly asks for an end-to-end run, the skill treats routine repository work such as branches, tests, reviews, commits, pull requests, and merges as part of that lifecycle. Merely mentioning, inspecting, or configuring the skill grants no such authority. It never authorizes public publishing, spending, credential access, production mutation, destructive cleanup, force-pushes, or bypassing repository protections.
-
-## Repository layout
+Tell the agent which repository to work in and what finished should look like:
 
 ```text
-skills/autonomous-project-run/
-├── SKILL.md
-├── agents/openai.yaml
-└── scripts/
-    ├── guardian_policy.py
-    ├── runtime_gate.py
-    ├── runtime_probe.py
-    └── setup_preflight.py
+Use $autonomous-project-run to finish this project with minimal supervision.
 ```
 
-The lifecycle target, requirements, architecture, state machines, protocols,
-delivery plan, verification matrix, and rollout strategy are maintained in
+A clear end-to-end request lets APR perform the routine repository work needed
+for that run, including branches, tests, reviews, commits, pull requests, and
+merges. Merely mentioning or inspecting APR does not grant that authority.
+
+## Safety boundaries
+
+APR checks that it is working in the intended project and isolated worktree
+before it changes anything. It also re-checks uncertain remote results before
+retrying, which helps prevent duplicate tasks, pull requests, and merges.
+
+APR does not treat an end-to-end request as permission to publish publicly,
+spend money, access credentials, change production, perform destructive cleanup,
+force-push, or bypass repository protections. Those actions still need their
+own clear authorization.
+
+For fully automatic continuation between separate tasks, the coding app must
+support task creation, isolated worktrees, and safe task handoff. If it does not,
+APR preserves progress and continues when the app next runs it instead of
+installing a background polling service.
+
+## Technical documentation
+
+The detailed lifecycle design, safety rules, state machines, protocols, and
+verification matrix are in
 [`docs/architecture/apr-lifecycle-v1/`](docs/architecture/apr-lifecycle-v1/README.md).
+Start with the shipped
+[`SKILL.md`](skills/autonomous-project-run/SKILL.md) for the agent-facing
+workflow and its bundled runtime helpers.
 
 ## Attribution and license
 
-This project composes and extends workflow concepts from [Matt Pocock's Skills for Real Engineers](https://github.com/mattpocock/skills), including Wayfinder. The upstream project is licensed under the MIT License. With thanks to Matt Pocock for Wayfinder and the composable workflow design.
+This project composes and extends workflow concepts from
+[Matt Pocock's Skills for Real Engineers](https://github.com/mattpocock/skills),
+including Wayfinder. The upstream project is licensed under the MIT License.
+With thanks to Matt Pocock for Wayfinder and the composable workflow design.
 
-This repository is independently maintained and is not affiliated with or endorsed by Matt Pocock. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This repository is independently maintained and is not affiliated with or
+endorsed by Matt Pocock. See [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Contributing and security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and pull-request guidance. Do not put vulnerability details in a public issue; follow [SECURITY.md](SECURITY.md) for private reporting or the detail-free contact fallback.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and pull-request guidance.
+Do not put vulnerability details in a public Issue; follow
+[SECURITY.md](SECURITY.md) for private reporting or the detail-free contact
+fallback.

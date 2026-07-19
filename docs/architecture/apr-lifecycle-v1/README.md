@@ -1,6 +1,6 @@
 # APR Lifecycle v1 — design index
 
-Status: approved target design; implementation not yet complete.
+Status: approved target design; Phase 0 portable contracts implemented, live host verification pending.
 
 This directory is the source of truth for the next Autonomous Project Run (APR)
 lifecycle improvement. It turns a requirements document into independently
@@ -18,6 +18,7 @@ large-context sampling, and minimizing user supervision.
 7. [06-VERIFICATION.md](06-VERIFICATION.md) — acceptance matrix, replay tests, and completion rules.
 8. [07-MIGRATION-ROLLBACK.md](07-MIGRATION-ROLLBACK.md) — staged rollout, compatibility, and rollback.
 9. [08-BASELINE-GAPS.md](08-BASELINE-GAPS.md) — verified current gaps and the evidence required to close them.
+10. [09-PHASE-0-BASELINE.md](09-PHASE-0-BASELINE.md) — frozen baseline, capability matrix, portable implementation, and remaining live evidence.
 
 ## Normative language
 
@@ -26,10 +27,11 @@ complete merely because the APR skill says it should happen: the responsible
 runtime or host integration must enforce it and verification must produce the
 evidence named in `06-VERIFICATION.md`.
 
-## Implementation status
+## Implementation scope
 
-Version `0.4.0` implements the Phase 0 local runtime gates, setup preflight, and
-guardian policy described by this design. The remaining lifecycle architecture
-is still a target design and is not complete until the verification matrix is
-satisfied. Repository code does not itself modify global Codex configuration,
-installed skills, GitHub state, or user tasks.
+The public skill now includes portable host-action validation, a versioned
+lifecycle reducer and external atomic registry store, and archive lifecycle
+transitions. It does not modify hooks, global Codex configuration, installed
+skills, GitHub state, or user tasks. Host-side enforcement and disposable live
+create/read/archive verification remain `UNVERIFIED` until trusted owner
+evidence and those capabilities are available.

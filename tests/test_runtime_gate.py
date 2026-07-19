@@ -460,6 +460,11 @@ def handoff_record(**overrides: object) -> dict[str, object]:
         "successors": ["ticket-2"],
         "successor_count": 1,
         "compaction_count": 1,
+        "handoff_trigger": {
+            "reason": "ineffective_compaction",
+            "evidence": {"source": "p0_telemetry", "reduction": "unknown"},
+            "safe_checkpoint": True,
+        },
         "authority": {"confirmed": True, "scope": "ticket-1"},
         "checkpoint": {
             "generation": 1, "head": "deadbeef", "source_fingerprint": "d" * 64,
@@ -688,21 +693,29 @@ class RuntimeGateTests(unittest.TestCase):
             os.mkfifo(path, 0o600)
             read_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             write_fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+            first_chunk_written = threading.Event()
+            writer_errors: list[BaseException] = []
 
             def write_chunks() -> None:
                 try:
                     os.write(write_fd, b"abc")
+                    first_chunk_written.set()
                     time.sleep(0.01)
                     os.write(write_fd, b"def")
+                except BaseException as error:
+                    writer_errors.append(error)
+                    first_chunk_written.set()
                 finally:
                     os.close(write_fd)
 
             writer = threading.Thread(target=write_chunks)
             writer.start()
             try:
+                self.assertTrue(first_chunk_written.wait(timeout=2))
+                self.assertEqual(writer_errors, [])
                 # Public-surface validation runs this suite repeatedly. Give the
-                # positive-path writer enough scheduling margin under load; the
-                # separate timeout test keeps the production bound covered.
+                # second chunk enough scheduling margin under load; the separate
+                # timeout test keeps the production bound covered.
                 with mock.patch.object(runtime_gate, "SUPERVISOR_STREAM_TIMEOUT_SECONDS", 10.0):
                     self.assertEqual(
                         runtime_gate._read_supervisor_stream(read_fd, 16, "stream_invalid"),
@@ -712,6 +725,36 @@ class RuntimeGateTests(unittest.TestCase):
                 os.close(read_fd)
                 writer.join(timeout=1)
             self.assertFalse(writer.is_alive())
+            self.assertEqual(writer_errors, [])
+
+    def test_supervisor_stream_split_read_replay_is_stable(self) -> None:
+        for attempt in range(40):
+            with self.subTest(attempt=attempt), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "stream"
+                os.mkfifo(path, 0o600)
+                read_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                write_fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+
+                def write_chunks() -> None:
+                    try:
+                        os.write(write_fd, b"abc")
+                        time.sleep(0.001)
+                        os.write(write_fd, b"def")
+                    finally:
+                        os.close(write_fd)
+
+                writer = threading.Thread(target=write_chunks)
+                writer.start()
+                try:
+                    with mock.patch.object(runtime_gate, "SUPERVISOR_STREAM_TIMEOUT_SECONDS", 1.0):
+                        self.assertEqual(
+                            runtime_gate._read_supervisor_stream(read_fd, 16, "stream_invalid"),
+                            b"abcdef",
+                        )
+                finally:
+                    os.close(read_fd)
+                    writer.join(timeout=1)
+                self.assertFalse(writer.is_alive())
 
     def test_supervisor_stream_rejects_oversized_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -841,6 +884,37 @@ class RuntimeGateTests(unittest.TestCase):
             result = decision(pre_record(root, worktree=str(external), cwd=str(external)))
             self.assertEqual(result["code"], "external_worktree")
 
+    def test_linked_project_accepts_external_common_dir_bound_to_repo_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "linked-project"
+            common_dir = base / "physical-repository" / ".git"
+            identity = hashlib.sha256(
+                f"{project.resolve()}\0{common_dir.resolve()}".encode()
+            ).hexdigest()
+            result = decision(pre_record(
+                project,
+                action="validate_pre_mutation_evidence",
+                repo_identity=identity,
+                common_dir=str(common_dir),
+            ))
+
+            self.assertEqual(result["code"], "pre_mutation_evidence_valid")
+
+    def test_linked_project_rejects_external_common_dir_not_bound_to_repo_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "linked-project"
+            common_dir = base / "unrelated" / ".git"
+            result = decision(pre_record(
+                project,
+                action="validate_pre_mutation_evidence",
+                repo_identity="6" * 64,
+                common_dir=str(common_dir),
+            ))
+
+            self.assertEqual(result["code"], "repo_mismatch")
+
     def test_nested_managed_worktree_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "project"
@@ -882,7 +956,7 @@ class RuntimeGateTests(unittest.TestCase):
             self.assertEqual(decision(managed)["code"], "pre_mutation_evidence_valid")
 
     def test_checkpoint_rejects_compaction_staleness_duplicates_and_context(self) -> None:
-        self.assertEqual(decision(handoff_record(compaction_count=2))["code"], "second_compaction")
+        self.assertEqual(decision(handoff_record(compaction_count=2))["decision"], "evidence")
         self.assertEqual(decision(handoff_record(stale=True))["code"], "stale_checkpoint")
         self.assertEqual(decision(handoff_record(schema_version=True))["code"], "unsupported_schema")
         self.assertEqual(decision(handoff_record(compactions={"other": 1}))["code"], "invalid_compactions")
@@ -904,6 +978,25 @@ class RuntimeGateTests(unittest.TestCase):
             "successor": "ticket-2", "handoff_hash": pending["hash"],
         }
         self.assertEqual(decision(pending)["code"], "successor_not_acknowledged")
+
+    def test_handoff_requires_bounded_safe_trigger_but_checkpoint_does_not(self) -> None:
+        missing = handoff_record()
+        missing.pop("handoff_trigger")
+        self.assertEqual(decision(missing)["code"], "missing_handoff_trigger")
+        unsafe = handoff_record()
+        unsafe["handoff_trigger"] = {
+            "reason": "natural_phase_boundary",
+            "evidence": {"source": "phase"},
+            "safe_checkpoint": False,
+        }
+        self.assertEqual(decision(unsafe)["code"], "unsafe_handoff_checkpoint")
+        record = handoff_record(action="checkpoint", successor_count=0, successors=[])
+        record.pop("handoff_trigger")
+        record["acknowledgement"] = {
+            "state": "pending", "owner": "owner-1", "generation": 1,
+            "successor": None, "handoff_hash": record["hash"],
+        }
+        self.assertEqual(decision(record)["decision"], "evidence")
 
     def test_checkpoint_without_successor_is_valid_only_for_checkpoint_action(self) -> None:
         record = handoff_record(action="checkpoint", successor_count=0, successors=[])
@@ -973,7 +1066,25 @@ class RuntimeGateTests(unittest.TestCase):
                 record.pop(key)
                 with self.subTest(key=key):
                     self.assertEqual(decision(record)["decision"], "block")
+                    if key in {"pending_side_effects", "unknown_outcomes"}:
+                        self.assertEqual(decision(record)["code"], f"missing_{key}")
             self.assertEqual(decision(pre_record(root, pending_side_effects=["unknown-write"]))["code"], "nonempty_pending_side_effects")
+
+            missing_and_nonempty = pre_record(root, unknown_outcomes=["unresolved"])
+            missing_and_nonempty.pop("pending_side_effects")
+            self.assertEqual(
+                decision(missing_and_nonempty)["code"], "nonempty_unknown_outcomes",
+            )
+
+            for overrides, expected in (
+                ({"operation": "invalid"}, "invalid_operation"),
+                ({"cwd": str(root)}, "cwd_mismatch"),
+                ({"operation": "prepare_worktree", "target_worktree": str(root / "outside")}, "external_worktree"),
+            ):
+                record = pre_record(root, **overrides)
+                record.pop("pending_side_effects")
+                with self.subTest(overrides=overrides):
+                    self.assertEqual(decision(record)["code"], expected)
 
     def test_checkpoint_identity_and_lease_bindings_are_required(self) -> None:
         missing_common = handoff_record(repo_identity="repo-1")
@@ -1006,7 +1117,7 @@ class RuntimeGateTests(unittest.TestCase):
             nested = {"nested": nested}
         result = run_gate({"action": "checkpoint", "handoff_payload": nested})
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(json.loads(result.stdout)["code"], "nested_too_deep")
+        self.assertEqual(json.loads(result.stdout)["code"], "context_too_deep")
         self.assertEqual(result.stderr, b"")
 
     def test_valid_and_invalid_luna_bootstrap(self) -> None:

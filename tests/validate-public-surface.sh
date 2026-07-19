@@ -6,14 +6,28 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
 
-cp -R "$repo_root/." "$test_root/repo"
+mkdir -p "$test_root/repo"
+# Export only the staged release candidate. This keeps linked-worktree metadata,
+# ignored continuity files, and nested managed worktrees out of the fixture.
+git -C "$repo_root" checkout-index --all --prefix="$test_root/repo/"
 cd "$test_root/repo"
+git init -q
+git config user.name 'APR public-surface test'
+git config user.email 'public-surface@example.invalid'
 
-# Test from a staged release candidate.  The source checkout may intentionally
-# contain unrelated edits or newly added release files while the candidate is
-# being prepared; the validator itself must enforce parity after this point.
+# Test from an isolated staged release candidate. The validator itself must
+# enforce index/worktree parity after this point.
 git add -A
 ./scripts/validate.sh >/dev/null
+
+# The baseline above runs the complete unit suite once. The remaining cases
+# repeatedly mutate only the staged/worktree public surface, so rerunning every
+# unit test for each negative fixture adds minutes without increasing coverage.
+export APR_VALIDATE_SURFACE_ONLY=1
+if APR_VALIDATE_SURFACE_ONLY=invalid ./scripts/validate.sh >/dev/null 2>&1; then
+  echo "validator accepted an invalid surface-only mode" >&2
+  exit 1
+fi
 
 cp CHANGELOG.md "$test_root/aligned-CHANGELOG.md"
 printf '%s\n' 'new release line' >> CHANGELOG.md
@@ -117,6 +131,13 @@ required_contract_markers=(
   'automatically invoke the resolved official `setup-matt-pocock-skills` skill'
   'Do not require the user to remember or manually invoke setup before APR'
   'fail closed before Wayfinder, tracker access, ticket creation, or repository mutation'
+  'Exact fixture-backed tool identities are accepted; unmatched aliases fail closed'
+  'Archive failure or unknown outcome remains `archive_pending`'
+  'approval-reviewed `--managed-worktree <absolute-path>` route'
+  'Do this internally; never ask the user to reopen the project or repeat the request'
+  'two-phase release'
+  'write-ahead transaction under the lease lock'
+  'continues automatically under APR protection'
 )
 for marker in "${required_contract_markers[@]}"; do
   awk -v marker="$marker" 'index($0, marker) == 0 { print }' "$skill_path" > skill-without-contract.md

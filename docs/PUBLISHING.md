@@ -27,8 +27,8 @@ repeat every public-surface and pull-request gate.
 ## Pull-request gate
 
 - For the first publication, create a new clean publishing repository from the reviewed snapshot only. For later releases, update only the existing canonical public repository.
-- Prepare the public snapshot on a scoped release-preparation branch (`release/v0.4.0` by default; a linked Issue branch is acceptable for the initial snapshot).
-- Open a pull request into `main` while the repository is still private.
+- Prepare the public snapshot on a scoped release-preparation branch (`release/vX.Y.Z` by default; use `release/v0.5.0` for this release, while a linked Issue branch is acceptable for the initial snapshot).
+- For the first publication, open the pull request into `main` while the repository is still private. For later releases, open the scoped release branch pull request in the existing public repository without changing visibility.
 - Immediately inspect `refs/pull/<number>/merge`; both its author and committer
   must use noreply addresses. If not, keep the repository private and recreate
   the canonical publishing repository after fixing the account setting.

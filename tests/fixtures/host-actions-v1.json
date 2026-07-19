@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "source": "codex_app_tool_declarations",
+  "capabilities": {
+    "create": "fixture_only",
+    "read": "fixture_only",
+    "list": "fixture_only",
+    "archive": "fixture_only",
+    "managed_worktree": "local_git_proven",
+    "trusted_owner_evidence": "unavailable"
+  },
+  "pretooluse_identities": {
+    "codex_appcreate_thread": "create_thread",
+    "codex_appread_thread": "read_thread",
+    "codex_applist_threads": "list_threads",
+    "codex_appset_thread_archived": "set_thread_archived"
+  },
+  "tools": [
+    {
+      "identity": "codex_app__create_thread",
+      "canonical": "create_thread",
+      "arguments": ["prompt", "target", "model", "thinking"]
+    },
+    {
+      "identity": "codex_app__read_thread",
+      "canonical": "read_thread",
+      "arguments": ["threadId", "hostId", "cursor", "turnLimit", "includeOutputs", "maxOutputCharsPerItem"]
+    },
+    {
+      "identity": "codex_app__list_threads",
+      "canonical": "list_threads",
+      "arguments": ["limit", "query"]
+    },
+    {
+      "identity": "codex_app__set_thread_archived",
+      "canonical": "set_thread_archived",
+      "arguments": ["archived", "threadId", "hostId"]
+    }
+  ]
+}

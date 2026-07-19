@@ -2,86 +2,111 @@
 
 ![Autonomous Project Run — AIベビーシッターからの解放](assets/readme/hero-ja.png)
 
-曖昧な目標から始まる複数IssueのGitHubプロジェクトを、少ない監督で検証済みの完了状態まで進めるスキルです。
+Autonomous Project Run（APR）は、複数のIssueがあるGitHubプロジェクトを、
+曖昧な目標から検証済みの完了状態まで、少ない確認で進めるCodexスキルです。
 
-`autonomous-project-run` は、仕様化、依存関係付きチケット、作業を分離した実装、テスト、AIレビュー、CI、Pull Request、マージ、Issueの完了確認、最終監査までをまとめて進行します。
+達成したい結果を伝えると、APRが残っている作業を整理し、通常のGitHub作業と
+検証を進めます。あなたに確認するのは、方針が変わる判断や安全上必要な場面です。
 
-> 状態：pre-stable（`0.4.0`）。セキュリティとreleaseのgateは本リポジトリに記載しています。
+> **初期リリース：** `v0.5.0` はまだ安定版ではありません。まずは作業内容を
+> commit済み、またはbackup済みのリポジトリで試してください。
 
 [English](README.md)
 
-## できること
+## こんなときに役立ちます
 
-- 計画や実装の途中からでも、最初に残っている工程を見つけて再開します。
-- 方向性、範囲、取り消せない操作に関わる重要な判断だけを人に確認します。
-- 1つの実装チケットを1つの新しいtaskで扱い、検証してから次へ進みます。
-- 仕様作成、TDD、code reviewなどの補助workflowを対象プロジェクトですぐ使えるか起動時に確認し、準備が足りなければ公式setup skillで自動的に整えます。
-- recovery guardianをread-only、project-singleton、transcript非継承とし、状態に変更がない場合やterminal状態では何も出力しません。
-- 正式な仕様、正確なsource state、dependencies、toolchain、生成物が一致する間だけ既存のevidenceを再利用します。
-- project/worktreeの安全性、短いhandoff、Luna xhighの依頼形式を、決定的なlocal runtime gateで強制します。
-- 変更の種類ごとの追加検査を行い、全チケットのmerge後に、汚れのない正確なcommitから最終統合テストを実行します。
-- production変更、credentials、支払い、破壊的操作など、明示された安全境界で停止します。
-- 全チケットを横断して監査し、本当に完了しているか確認します。
+- 関連するIssueが複数ある、または実装計画が途中で止まっている
+- 1つのCodexタスクでは終わらない作業を任せたい
+- テスト、レビュー、Pull Request、マージ、Issueの完了確認までを一続きで進めたい
+- 「続きをやって」「これはもう終わった」と何度も伝える手間を減らしたい
 
-## 必要なもの
+## APRが行うこと
 
-- Agent Skillsに対応したcoding agent
-- 全工程を使う場合は、GitHubリポジトリと認証済みの `gh` CLI
-- Matt Pocock氏のworkflow skill suite（`setup-matt-pocock-skills`、`wayfinder`、`to-spec`、`to-tickets`、`implement` を含む）
-- 無人で複数Issueを進める場合は、新しいtask/threadの作成、分離されたworktree、永続化したlifecycle state、singleton watchdogの仕組み
-- hostが提供する場合はsafe-continuation handoff。ない場合は、検証済みの最小handoffを使い、正式なstateを独立して再確認できること
-- Codexのレビューゲートを使う場合は `codex-autoreview`
+- **現在地から始めます。** リポジトリとGitHubを確認し、最初に残っている工程を
+  見つけて、完了済みの作業を繰り返しません。
+- **作業を混ぜません。** 実装するIssueごとにタスク、ブランチ、専用のGit作業用
+  フォルダ（worktree）を分け、関係のない変更が混ざるのを防ぎます。
+- **中断から戻れます。** 検証済みの進捗を保存し、プロジェクトを開き直したり、
+  同じ依頼を送り直したりせず、その続きから再開します。
+- **同じ操作を重ねません。** タスク作成、Pull Request、マージ、Issue完了などを
+  行う前に、すでに実行済みでないか確認します。
+- **工程ごとに確かめます。** 必要なテスト、コードレビュー、CI、対象commitを
+  確認してから次へ進みます。
+- **最後に全体を見直します。** 約束したすべてのIssueが完了しているか監査してから、
+  プロジェクトの完了を報告します。
 
-先に元となるworkflow skillsをインストールします。
+長い会話では、Codexアプリが会話の要点だけを残して整理することがあります。その場合も
+APRは作業位置を保存し、残りを確認して続けます。会話が長くなったという理由だけで
+仕事を放棄しません。
+
+## インストール
+
+APRは [`mattpocock/skills`](https://github.com/mattpocock/skills) のworkflow
+skillsを利用します。先にこちらをインストールします。
 
 ```sh
 npx skills@latest add mattpocock/skills
 ```
 
-表示された選択肢からworkflow suiteを選びます。関連するcompanion skillsには `grilling`、`domain-modeling`、`research`、`prototype`、`tdd`、`code-review` があります。続いて本スキルをインストールします。
+表示された選択肢からworkflow suiteを選び、続いてAPRをインストールします。
 
 ```sh
 npx skills@latest add AkiGarage/autonomous-project-run-skill
 ```
 
-APRを対象リポジトリで起動すると、仕様作成、TDD、code reviewなどの補助workflowを使う準備が整っているか確認します。必要な設定ファイルや `Agent Skills` の指示が不足・不完全な場合は、公式の `setup-matt-pocock-skills` skillを自動で呼び出し、そのskillが求める確認を行ったうえで、準備が完了したことを再検証してから続行します。事前に `/setup-matt-pocock-skills` を手動実行しておく必要はありません。
+すべての工程を使うには、Agent Skillsに対応したcoding app、GitHubリポジトリ、
+認証済みの `gh` CLIも必要です。
 
-入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。Guardianにはsingleton ownership、boundedなstate-only input、transcript非継承、変更なし・terminal状態での無出力が必要です。hostがこれらを強制できない場合、本スキルはguardianを追加せず、人が確認しながら手動で継続します。
+APRは対象リポジトリで起動すると、必要なプロジェクト設定を確認します。Matt Pocockの
+workflow設定が不足している場合は、公式setup skillを実行し、正しく設定できたことを
+確かめてから作業を始めます。事前に `/setup-matt-pocock-skills` を実行する必要はありません。
 
 ## 使い方
 
-対象リポジトリと達成したい結果を指定して呼び出します。
+対象リポジトリと、どこまでできたら完了なのかを伝えます。
 
 ```text
 $autonomous-project-run を使って、このプロジェクトを少ない確認だけで完了まで進めてください。
 ```
 
-ユーザーがend-to-endの実行を明確に依頼した場合、ブランチ作成、テスト、レビュー、commit、Pull Request、マージなどの通常作業をそのlifecycleに含めます。スキルへの言及、確認、設定だけでは、その権限は付与されません。Public公開、支払い、credentialsへのアクセス、production変更、破壊的な整理、force-push、保護ルールの回避は常に許可されません。
+最初から最後まで進める依頼を明確にした場合、APRはブランチ作成、テスト、レビュー、
+commit、Pull Request、マージなど、その作業に必要な通常のリポジトリ操作を行えます。
+APRについて質問したり、設定を確認したりするだけでは、その権限は付与されません。
 
-## リポジトリ構成
+## 安全のために止まる場面
 
-```text
-skills/autonomous-project-run/
-├── SKILL.md
-├── agents/openai.yaml
-└── scripts/
-    ├── guardian_policy.py
-    ├── runtime_gate.py
-    ├── runtime_probe.py
-    └── setup_preflight.py
-```
+APRは変更前に、対象のプロジェクトと分離されたworktreeが正しいかを確認します。
+また、外部操作の結果が不明なときは状態を確認してから再試行し、タスク、Pull Request、
+マージなどの重複を防ぎます。
 
-lifecycleの最終目標、要件、architecture、state machine、protocol、delivery
-plan、verification matrix、rollout戦略は
+最初から最後まで進める依頼でも、一般公開、支払い、認証情報へのアクセス、
+本番環境の変更、破壊的な整理、force-push、リポジトリ保護の回避は許可されません。
+これらには、それぞれ明確な許可が必要です。
+
+別タスクへ完全に自動で引き継ぐには、Codexアプリ側がタスク作成、分離されたworktree、
+安全な引き継ぎに対応している必要があります。未対応の場合でも、APRは進捗を保存し、
+次に実行できる機会から続きを進めます。常駐の監視処理を勝手に追加することはありません。
+
+## 技術資料
+
+詳しい設計、安全ルール、状態管理、通信手順、検証項目は
 [`docs/architecture/apr-lifecycle-v1/`](docs/architecture/apr-lifecycle-v1/README.md)
-を正本として管理します。
+にまとめています。Agent向けの手順と同梱の補助スクリプトについては、配布される
+[`SKILL.md`](skills/autonomous-project-run/SKILL.md) から確認できます。
 
 ## 出典とライセンス
 
-本プロジェクトは、Wayfinderを含む [Matt Pocock's Skills for Real Engineers](https://github.com/mattpocock/skills) のworkflow conceptsを組み合わせ、拡張しています。元プロジェクトはMIT Licenseで公開されています。Wayfinderと組み合わせ可能なworkflow設計を公開したMatt Pocock氏に感謝します。
+本プロジェクトは、Wayfinderを含む
+[Matt Pocock's Skills for Real Engineers](https://github.com/mattpocock/skills)
+の考え方を組み合わせ、拡張しています。元プロジェクトはMIT Licenseで公開されています。
+Wayfinderと組み合わせ可能なworkflow設計を公開したMatt Pocock氏に感謝します。
 
-本リポジトリは独立して管理されており、Matt Pocock氏との提携や同氏による推奨を示すものではありません。[LICENSE](LICENSE) と [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+本リポジトリは独立して管理されており、Matt Pocock氏との提携や同氏による推奨を
+示すものではありません。[LICENSE](LICENSE) と
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 
 ## コントリビューションとセキュリティ
 
-検証方法とPull Requestの方針は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。公開Issueに脆弱性の詳細を書かず、非公開報告または詳細を含めない連絡方法について [SECURITY.md](SECURITY.md) に従ってください。
+検証方法とPull Requestの方針は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+公開Issueに脆弱性の詳細を書かず、非公開報告または詳細を含めない連絡方法について
+[SECURITY.md](SECURITY.md) に従ってください。
