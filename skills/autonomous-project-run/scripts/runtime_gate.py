@@ -741,10 +741,6 @@ def _validate_pre_evidence(
         _error("fingerprint_mismatch")
     if evidence["fingerprints"] != normalized:
         _error("owner_evidence_mismatch")
-    for key in ("pending_side_effects", "unknown_outcomes"):
-        value = record.get(key)
-        if value != []:
-            _error(f"nonempty_{key}")
 
 
 def _validate_pre_mutation(record: dict[str, Any]) -> dict[str, Any]:
@@ -807,6 +803,15 @@ def _validate_pre_mutation(record: dict[str, Any]) -> dict[str, Any]:
         and not _repo_identity_binds_common_dir(project, common_dir, identity)
     ):
         _error("repo_mismatch")
+
+    # A retry marker is valid only for a pure omission. Validate every present
+    # claim and every other mutation invariant before reporting a missing key.
+    for key in ("pending_side_effects", "unknown_outcomes"):
+        if key in record and record[key] != []:
+            _error(f"nonempty_{key}")
+    for key in ("pending_side_effects", "unknown_outcomes"):
+        if key not in record:
+            _error(f"missing_{key}")
 
     return {
         "decision": "allow",

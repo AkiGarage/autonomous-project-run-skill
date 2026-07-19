@@ -1066,7 +1066,25 @@ class RuntimeGateTests(unittest.TestCase):
                 record.pop(key)
                 with self.subTest(key=key):
                     self.assertEqual(decision(record)["decision"], "block")
+                    if key in {"pending_side_effects", "unknown_outcomes"}:
+                        self.assertEqual(decision(record)["code"], f"missing_{key}")
             self.assertEqual(decision(pre_record(root, pending_side_effects=["unknown-write"]))["code"], "nonempty_pending_side_effects")
+
+            missing_and_nonempty = pre_record(root, unknown_outcomes=["unresolved"])
+            missing_and_nonempty.pop("pending_side_effects")
+            self.assertEqual(
+                decision(missing_and_nonempty)["code"], "nonempty_unknown_outcomes",
+            )
+
+            for overrides, expected in (
+                ({"operation": "invalid"}, "invalid_operation"),
+                ({"cwd": str(root)}, "cwd_mismatch"),
+                ({"operation": "prepare_worktree", "target_worktree": str(root / "outside")}, "external_worktree"),
+            ):
+                record = pre_record(root, **overrides)
+                record.pop("pending_side_effects")
+                with self.subTest(overrides=overrides):
+                    self.assertEqual(decision(record)["code"], expected)
 
     def test_checkpoint_identity_and_lease_bindings_are_required(self) -> None:
         missing_common = handoff_record(repo_identity="repo-1")
