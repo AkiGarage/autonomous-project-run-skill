@@ -8,50 +8,58 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Exact, fixture-backed host task-action request/result validation with fail-closed identity matching and read-after-write reconciliation.
-- A versioned lifecycle event reducer with strict nested-state validation and a restrictive, identity-bound external atomic registry store for ticket, external-action, and archive state.
-- Archive eligibility and retry transitions bound to exact-thread host-action readback that keep implementation completion, thread archival, and worktree cleanup orthogonal.
+- Reliable continuation between separate coding tasks, without asking the user
+  to reopen the project or repeat the original request when the host supports it.
+- Checks that tie every task action to the intended project and Issue, helping
+  prevent work from continuing in the wrong place.
+- Safer completion and archive handling so a finished task does not leave stale
+  state that blocks the next run.
 
 ### Changed
 
-- Persist bounded native task timeout and capacity waits so the next verified host event can resume them without duplicate task creation or an added polling daemon.
-- Treat compaction as a durable checkpoint and require an evidence-bound safe handoff reason instead of stopping mechanically after a fixed count.
-- Accept linked project checkouts and exact managed worktrees only when probe-derived repository identity, owner evidence, and host capability agree.
-- Reject ambiguous nested repositories, unsafe path spellings, sensitive handoff fields, and caller-supplied ownership or lifecycle evidence.
-- Require affirmative user intent for host activation; negated, quoted, documentation, configuration, inspection, and review-only mentions no longer activate APR.
-- Keep live leases exclusive and allow expired cross-session ownership reconciliation only through the new session's trusted affirmative APR `UserPromptSubmit`; ordinary `Stop` and caller-supplied evidence cannot release or transfer ownership.
-- Route the installed probe to one exact managed worktree with physical cwd, project, common-directory, and existing-binding checks; accept a portable macOS interpreter path and one deadline-bounded, newline-delimited PTY frame without weakening host authority.
-- Execute only the release-pinned current or immutable known-good probe supervisor, failing closed when its ownership, mode, size, path, or SHA-256 does not match.
-- Transfer successor ownership through a crash-recoverable host write-ahead transaction and committed receipt, so continuation does not require reopening the project, repeating the request, or pasting a release command.
-- Add a two-phase terminal owner release bound to current registry proof; later mutations remain fenced while retries, delayed `Stop`, and successor acknowledgements stay idempotent.
-- Build public-surface validation fixtures from the staged index so linked-worktree metadata and ignored runtime state cannot enter a release candidate.
+- Waiting caused by timeouts or temporary capacity limits now survives safely and
+  resumes later without creating duplicate tasks or a background polling service.
+- When a long conversation is shortened by the coding app, APR saves its place,
+  reviews what remains, and does not stop solely because the conversation was long.
+- Project and worktree checks now reject ambiguous or mismatched locations before
+  any repository change.
+- Only a clear request to run APR activates it. Documentation examples, questions,
+  inspection requests, and negated requests do not start autonomous work.
+- Interrupted handoffs and repeated completion signals are reconciled safely
+  instead of repeating work or leaving stale ownership behind.
+- Public-release validation now uses only the intended staged files, keeping local
+  worktree metadata and ignored runtime state out of the published snapshot.
 
 ## [0.4.0] - 2026-07-15
 
 ### Added
 
-- Deterministic APR-local runtime gates for project/worktree mutation safety, compact handoffs, and Luna xhigh bootstrap packets.
-- Stateless singleton guardian policy with bounded state-only input and silent unchanged/terminal polling.
+- Stronger project and worktree checks before repository changes.
+- A quiet recovery check that does not duplicate work or keep reporting unchanged
+  state.
 - Automatic per-repository Matt Pocock setup detection, official setup-skill invocation, and completion revalidation before planning or mutation.
 
 ### Changed
 
-- Treat 64k as an emergency root ceiling and require safe continuation before a second root compaction.
-- Require project association, physical cwd, and managed worktree identity together; Git common-dir equality alone is insufficient.
+- Long runs save a verified continuation point before conversation limits become
+  a problem.
+- Work now continues only when the open project and isolated worktree both match
+  the intended repository.
 
 ## [0.3.0] - 2026-07-15
 
 ### Added
 
-- Durable lifecycle state, fenced watchdog recovery, and safe task handoffs for long unattended runs.
-- Canonical-spec and exact-source-state fingerprints for reusable reads, tests, and artifacts.
-- Selective evidence invalidation, dependency/reverse-dependency closure checks, and full-reread fallbacks.
-- Change-class gates and clean exact-commit final integration verification.
+- Saved progress and safe task handoff for long runs.
+- Reuse of earlier reads and test results only while the relevant source and
+  requirements remain unchanged.
+- Targeted re-checking when related files or dependencies change.
+- Final integration verification from the exact reviewed commit.
 
 ### Changed
 
-- Clarified that routine repository mutations require an explicit end-to-end user request.
-- Added read-after-write reconciliation for remote mutations and unknown outcomes.
+- Routine repository changes now require a clear end-to-end request.
+- Uncertain GitHub results are checked before retrying, reducing duplicate actions.
 
 ## [0.2.0] - 2026-07-14
 
