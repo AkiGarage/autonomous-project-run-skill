@@ -625,15 +625,46 @@ class RuntimeProbeTests(unittest.TestCase):
 
     def test_tty_frame_rejects_eof_before_newline(self) -> None:
         master, slave = os.openpty()
-        os.write(master, b"{}")
-        os.close(master)
+        configured = threading.Event()
+        outcome: dict[str, object] = {}
+        real_tcsetattr = runtime_probe.termios.tcsetattr
+
+        def configure_and_signal(*args: object) -> None:
+            real_tcsetattr(*args)
+            configured.set()
+
+        def read_partial_frame() -> None:
+            try:
+                outcome["result"] = runtime_probe._read_tty_frame(slave)
+            except Exception as error:  # noqa: BLE001 - preserve worker outcome
+                outcome["error"] = error
+
+        reader = threading.Thread(target=read_partial_frame)
+        master_open = True
         try:
-            with self.assertRaisesRegex(
-                runtime_probe.ProbeError, "^input_frame_incomplete$"
+            with mock.patch.object(
+                runtime_probe.termios,
+                "tcsetattr",
+                side_effect=configure_and_signal,
             ):
-                runtime_probe._read_tty_frame(slave)
+                reader.start()
+                configured_before_close = configured.wait(timeout=1)
+                if configured_before_close:
+                    os.write(master, b"{}")
+                    os.close(master)
+                    master_open = False
+                reader.join(timeout=1)
+                completed = not reader.is_alive()
         finally:
+            if master_open:
+                os.close(master)
+            reader.join(timeout=1)
             os.close(slave)
+        self.assertTrue(configured_before_close, "PTY reader was not configured")
+        self.assertTrue(completed, "PTY reader did not finish after EOF")
+        self.assertNotIn("result", outcome)
+        self.assertIsInstance(outcome.get("error"), runtime_probe.ProbeError)
+        self.assertEqual(str(outcome["error"]), "input_frame_incomplete")
 
     def test_read_input_rejects_oversized_non_tty_frame(self) -> None:
         stdin = mock.Mock()
