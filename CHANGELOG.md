@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-07-18
+## [0.5.0] - 2026-07-19
 
 ### Added
 
@@ -20,6 +20,10 @@ All notable changes to this project will be documented in this file.
 - Reject ambiguous nested repositories, unsafe path spellings, sensitive handoff fields, and caller-supplied ownership or lifecycle evidence.
 - Require affirmative user intent for host activation; negated, quoted, documentation, configuration, inspection, and review-only mentions no longer activate APR.
 - Keep live leases exclusive and allow expired cross-session ownership reconciliation only through the new session's trusted affirmative APR `UserPromptSubmit`; ordinary `Stop` and caller-supplied evidence cannot release or transfer ownership.
+- Route the installed probe to one exact managed worktree with physical cwd, project, common-directory, and existing-binding checks; accept a portable macOS interpreter path and one deadline-bounded, newline-delimited PTY frame without weakening host authority.
+- Execute only the release-pinned current or immutable known-good probe supervisor, failing closed when its ownership, mode, size, path, or SHA-256 does not match.
+- Transfer successor ownership through a crash-recoverable host write-ahead transaction and committed receipt, so continuation does not require reopening the project, repeating the request, or pasting a release command.
+- Add a two-phase terminal owner release bound to current registry proof; later mutations remain fenced while retries, delayed `Stop`, and successor acknowledgements stay idempotent.
 - Build public-surface validation fixtures from the staged index so linked-worktree metadata and ignored runtime state cannot enter a release candidate.
 
 ## [0.4.0] - 2026-07-15

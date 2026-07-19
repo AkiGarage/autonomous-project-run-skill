@@ -11,6 +11,8 @@ import selectors
 import stat
 import subprocess
 import sys
+import termios
+import tempfile
 import time
 from typing import Any, NoReturn
 
@@ -18,10 +20,44 @@ import runtime_gate
 
 
 MAX_INPUT_BYTES = runtime_gate.MAX_INPUT_BYTES
+SUPERVISOR_FDS = (198, 199, 200)
+SUPERVISED_ENV = "CODEX_APR_PROBE_SUPERVISED"
+INSTALLED_PROBE = Path.home() / ".codex" / "skills" / "autonomous-project-run" / "scripts" / "runtime_probe.py"
+INSTALLED_SUPERVISOR = Path.home() / ".codex" / "runtime-controls" / "apr_probe_supervisor.py"
+SUPERVISOR_SHA256 = "33bc477d3924ebfd61108bec32eb8c6d22a739750d112b12dcaeb761f8f55170"
+MAX_SUPERVISOR_BYTES = 2 * 1024 * 1024
+PTY_FRAME_TIMEOUT_SECONDS = 30.0
+SUPERVISOR_LOADER = """\
+import os
+import sys
+
+path = sys.argv[1]
+descriptor = int(sys.argv[2])
+remaining = int(sys.argv[3]) + 1
+parent = os.path.dirname(path)
+if not os.path.isabs(path) or not parent:
+    raise SystemExit("verified supervisor path is invalid")
+sys.path.insert(0, parent)
+chunks = []
+while remaining > 0:
+    chunk = os.read(descriptor, min(128 * 1024, remaining))
+    if not chunk:
+        break
+    chunks.append(chunk)
+    remaining -= len(chunk)
+os.close(descriptor)
+if remaining <= 0:
+    raise SystemExit("verified supervisor exceeds size limit")
+sys.argv = [path, *sys.argv[4:]]
+namespace = {"__name__": "__main__", "__file__": path}
+exec(compile(b"".join(chunks), path, "exec"), namespace, namespace)
+"""
 AUTHORITATIVE_KEYS = {
     "project_root", "cwd", "worktree", "repo", "repo_identity",
     "common_dir", "is_bare", "bare", "branch", "head", "dirty_state", "fingerprints",
 }
+OWNER_RELEASE_ARGUMENT = "--release-lease"
+MANAGED_WORKTREE_ARGUMENT = "--managed-worktree"
 
 # Untracked files are attacker-controlled input.  Keep their enumeration and
 # content reads deterministic so a FIFO/huge tree cannot hold the gate open.
@@ -644,10 +680,244 @@ def _emit(value: dict[str, Any], status: int) -> NoReturn:
     raise SystemExit(status)
 
 
-def main() -> None:
-    raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+def _read_tty_frame(descriptor: int) -> bytes:
+    """Read one newline-delimited PTY frame within a fixed deadline."""
+    try:
+        original = termios.tcgetattr(descriptor)
+        configured = list(original)
+        configured[6] = list(original[6])
+        configured[3] &= ~(termios.ICANON | termios.ECHO)
+        configured[6][termios.VMIN] = 1
+        configured[6][termios.VTIME] = 0
+        termios.tcsetattr(descriptor, termios.TCSANOW, configured)
+    except (OSError, termios.error) as error:
+        raise ProbeError("input_terminal_invalid") from error
+    raw = bytearray()
+    selector = selectors.DefaultSelector()
+    try:
+        try:
+            selector.register(descriptor, selectors.EVENT_READ)
+        except (OSError, ValueError) as error:
+            raise ProbeError("input_terminal_invalid") from error
+        deadline = time.monotonic() + PTY_FRAME_TIMEOUT_SECONDS
+        while True:
+            remaining = MAX_INPUT_BYTES + 2 - len(raw)
+            if remaining <= 0:
+                raise ProbeError("input_too_large")
+            wait = deadline - time.monotonic()
+            if wait <= 0 or not selector.select(wait):
+                raise ProbeError("input_frame_incomplete")
+            try:
+                chunk = os.read(descriptor, min(64 * 1024, remaining))
+            except OSError as error:
+                raise ProbeError("input_frame_incomplete") from error
+            if not chunk:
+                raise ProbeError("input_frame_incomplete")
+            newline = chunk.find(b"\n")
+            if newline >= 0:
+                raw.extend(chunk[:newline])
+                trailing = chunk[newline + 1:]
+                if len(raw) > MAX_INPUT_BYTES:
+                    raise ProbeError("input_too_large")
+                if trailing:
+                    raise ProbeError("trailing_input")
+                break
+            raw.extend(chunk)
+            if len(raw) > MAX_INPUT_BYTES:
+                raise ProbeError("input_too_large")
+    finally:
+        selector.close()
+        try:
+            termios.tcsetattr(descriptor, termios.TCSANOW, original)
+        except (OSError, termios.error) as error:
+            raise ProbeError("input_terminal_restore_failed") from error
+    return bytes(raw)
+
+
+def _read_input() -> bytes:
+    stream = sys.stdin.buffer
+    try:
+        descriptor = stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        descriptor = -1
+    raw = (
+        _read_tty_frame(descriptor)
+        if descriptor >= 0 and os.isatty(descriptor)
+        else stream.read(MAX_INPUT_BYTES + 1)
+    )
     if len(raw) > MAX_INPUT_BYTES:
-        _emit({"decision": "block", "code": "input_too_large"}, 2)
+        raise ProbeError("input_too_large")
+    return raw
+
+
+def _supervisor_context_available() -> bool:
+    if os.environ.get(SUPERVISED_ENV) != "1":
+        return False
+    try:
+        for descriptor in SUPERVISOR_FDS:
+            os.fstat(descriptor)
+    except OSError:
+        return False
+    return True
+
+
+def _is_installed_probe() -> bool:
+    candidate = Path(__file__)
+    try:
+        if candidate.is_symlink() or INSTALLED_PROBE.is_symlink():
+            return False
+        return candidate.resolve(strict=True) == INSTALLED_PROBE.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _open_trusted_supervisor(path: Path) -> tuple[int, str]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o022
+            or metadata.st_size > MAX_SUPERVISOR_BYTES
+        ):
+            raise OSError("unsafe supervisor")
+        digest = hashlib.sha256()
+        remaining = MAX_SUPERVISOR_BYTES + 1
+        with tempfile.TemporaryFile(prefix="apr-pinned-supervisor-") as snapshot:
+            while remaining > 0:
+                chunk = os.read(descriptor, min(128 * 1024, remaining))
+                if not chunk:
+                    break
+                digest.update(chunk)
+                snapshot.write(chunk)
+                remaining -= len(chunk)
+            if remaining <= 0:
+                raise OSError("oversize supervisor")
+            snapshot.flush()
+            snapshot.seek(0)
+            return os.dup(snapshot.fileno()), digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def _trusted_supervisor_digest(path: Path) -> str:
+    descriptor, digest = _open_trusted_supervisor(path)
+    os.close(descriptor)
+    return digest
+
+
+def _resolve_supervisor() -> tuple[Path, int]:
+    try:
+        runtime_root = INSTALLED_SUPERVISOR.parent.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise OSError("missing runtime root") from error
+    current = runtime_root / INSTALLED_SUPERVISOR.name
+    try:
+        descriptor, digest = _open_trusted_supervisor(current)
+        if digest == SUPERVISOR_SHA256:
+            return current, descriptor
+        os.close(descriptor)
+    except (OSError, RuntimeError, ValueError):
+        pass
+    known_good = runtime_root / "releases" / "known-good"
+    try:
+        releases = sorted(known_good.iterdir())
+    except OSError as error:
+        raise OSError("missing known-good supervisor") from error
+    for release in releases:
+        if (
+            len(release.name) != 64
+            or any(character not in "0123456789abcdef" for character in release.name)
+            or release.is_symlink()
+            or not release.is_dir()
+        ):
+            continue
+        candidate = release / "runtime" / INSTALLED_SUPERVISOR.name
+        try:
+            descriptor, digest = _open_trusted_supervisor(candidate)
+            if digest == SUPERVISOR_SHA256:
+                return candidate, descriptor
+            os.close(descriptor)
+        except (OSError, RuntimeError, ValueError):
+            continue
+    raise OSError("matching supervisor unavailable")
+
+
+def _delegate_to_supervisor(raw: bytes) -> NoReturn:
+    """Use the host-issued current ticket without changing the approval-reviewed command."""
+    descriptor: int | None = None
+    try:
+        supervisor, descriptor = _resolve_supervisor()
+        completed = subprocess.run(
+            (
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                SUPERVISOR_LOADER,
+                str(supervisor),
+                str(descriptor),
+                str(MAX_SUPERVISOR_BYTES),
+                "--discover",
+            ),
+            input=raw,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=Path.cwd(),
+            check=False,
+            pass_fds=(descriptor,),
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("PYTHON")
+            },
+        )
+    except (OSError, RuntimeError, ValueError):
+        _emit({"decision": "block", "code": "probe_supervisor_unavailable"}, 2)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    sys.stdout.buffer.write(completed.stdout)
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.write(completed.stderr)
+    sys.stderr.buffer.flush()
+    raise SystemExit(completed.returncode)
+
+
+def main(argv: list[str] | None = None) -> None:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments == [OWNER_RELEASE_ARGUMENT]:
+        # The host hook already armed the owner/session/worktree-bound
+        # two-phase release before this harmless evidence command can run.
+        _emit({"decision": "evidence", "code": "apr_owner_release_requested"}, 0)
+    if arguments:
+        if len(arguments) != 2 or arguments[0] != MANAGED_WORKTREE_ARGUMENT:
+            _emit({"decision": "block", "code": "invalid_arguments"}, 2)
+        raw_target = Path(arguments[1]).expanduser()
+        try:
+            target = raw_target.resolve(strict=True)
+            cwd = Path.cwd().resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            _emit({"decision": "block", "code": "invalid_managed_worktree_argument"}, 2)
+        if (
+            not raw_target.is_absolute()
+            or raw_target.is_symlink()
+            or raw_target != target
+            or not target.is_dir()
+        ):
+            _emit({"decision": "block", "code": "invalid_managed_worktree_argument"}, 2)
+        if cwd != target:
+            _emit({"decision": "block", "code": "managed_worktree_argument_cwd_mismatch"}, 2)
+    try:
+        raw = _read_input()
+    except ProbeError as error:
+        _emit({"decision": "block", "code": str(error)}, 2)
+    if not _supervisor_context_available() and _is_installed_probe():
+        _delegate_to_supervisor(raw)
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError):

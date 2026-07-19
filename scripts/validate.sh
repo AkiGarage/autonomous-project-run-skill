@@ -219,6 +219,11 @@ required_skill_contracts=(
   'complete diff/change inventory, acceptance-to-evidence map, change-class surface/invariant/reverse-dependency map'
   'Exact fixture-backed tool identities are accepted; unmatched aliases fail closed'
   'Archive failure or unknown outcome remains `archive_pending`'
+  'approval-reviewed `--managed-worktree <absolute-path>` route'
+  'Do this internally; never ask the user to reopen the project or repeat the request'
+  'two-phase release'
+  'write-ahead transaction under the lease lock'
+  'continues automatically under APR protection'
 )
 for contract in "${required_skill_contracts[@]}"; do
   if ! grep -Fq "$contract" skills/autonomous-project-run/SKILL.md; then

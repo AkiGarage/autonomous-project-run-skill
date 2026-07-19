@@ -17,6 +17,8 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 - Runs one implementation ticket per fresh task and verifies it before moving forward.
 - Treats compaction as a durable checkpoint and replan signal, never as a mechanical stop condition.
 - Bounds native task calls, persists timeout/capacity waits, and resumes them on the next real host event without duplicating a task or requiring a polling daemon.
+- Transfers a verified successor atomically through a crash-recoverable host transaction, without asking you to reopen the project or repeat the request.
+- Releases terminal ownership in two phases only after durable completion evidence exists, fencing later mutations while preventing stale ownership from stopping future work.
 - Detects missing Matt Pocock per-repository configuration, invokes the official setup skill automatically, and verifies completion before planning or mutation.
 - Keeps recovery guardians read-only, project-singleton, transcript-free, and silent when state is unchanged or terminal.
 - Reuses evidence only while the canonical spec, exact source state, dependencies, toolchain, and generated artifacts still match.
@@ -32,7 +34,7 @@ Take a multi-ticket GitHub project from an unclear goal to a verified result wit
 - A skills-compatible coding agent
 - A GitHub-backed project and authenticated `gh` CLI for the full workflow
 - Matt Pocock's workflow skill suite, including `setup-matt-pocock-skills`, `wayfinder`, `to-spec`, `to-tickets`, and `implement`
-- Native task/thread lifecycle controls, isolated worktrees, and durable lifecycle state; unattended recovery needs either a verified scheduler or delivery of the next real host event, not an added polling daemon
+- Native task/thread lifecycle controls, isolated worktrees, durable lifecycle state, and a compatible host supervisor for automatic successor transfer; without host support, recovery waits for the next real host event instead of adding a polling daemon
 - A safe-continuation handoff facility when the host provides one; otherwise use a validated minimal handoff and independently recheck authoritative state
 - `codex-autoreview` when the Codex review gate is enabled
 
@@ -50,7 +52,7 @@ npx skills@latest add AkiGarage/autonomous-project-run-skill
 
 When APR starts in a target repository, it runs its bundled setup preflight. If the required `docs/agents/*.md` configuration and matching `Agent skills` instructions are missing or incomplete, APR automatically invokes the official `setup-matt-pocock-skills` skill, follows that skill's required confirmations, and verifies the resulting setup before continuing. You do not need to remember to run `/setup-matt-pocock-skills` first.
 
-Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. An optional guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; the durable foreground owner continues and the next verified host event performs recovery.
+Use the official [`mattpocock/skills`](https://github.com/mattpocock/skills) source. In managed environments, review and pin a known-compatible revision when the host supports dependency locks. An optional guardian must support singleton ownership, bounded state-only input, no transcript inheritance, and silence for unchanged or terminal state. If the host cannot enforce those controls, this skill does not add another guardian; the durable foreground owner continues. Automatic successor wake-up requires a compatible host, and otherwise the next verified host event performs recovery.
 
 ## Usage
 

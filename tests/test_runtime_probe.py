@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import fcntl
 import hmac
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -255,6 +257,7 @@ class RuntimeProbeTests(unittest.TestCase):
                 result = subprocess.run(
                     ["python3", str(PROBE)], cwd=cwd, input=json.dumps(payload),
                     text=True, capture_output=True, check=False,
+                    env={**os.environ, runtime_probe.SUPERVISED_ENV: "1"},
                     pass_fds=(SUPERVISOR_CAPABILITY_FD, SUPERVISOR_KEY_FD, SUPERVISOR_LOCK_FD),
                 )
             finally:
@@ -420,7 +423,8 @@ class RuntimeProbeTests(unittest.TestCase):
     def test_rejects_json_with_huge_integer_as_invalid_json(self) -> None:
         raw = b'{"action":"pre_mutation","generation":' + (b"9" * 5000) + b"}"
         result = subprocess.run(
-            ["python3", str(PROBE)], cwd=self.repo, input=raw, capture_output=True, check=False
+            ["python3", str(PROBE)], cwd=self.repo, input=raw,
+            capture_output=True, check=False,
         )
         self.assertEqual(result.returncode, 2)
         self.assertEqual(json.loads(result.stdout)["code"], "invalid_json")
@@ -568,6 +572,265 @@ class RuntimeProbeTests(unittest.TestCase):
             with mock.patch.object(runtime_probe, "GIT_PROBE_TIMEOUT_SECONDS", 0.05):
                 with self.assertRaisesRegex(runtime_probe.ProbeError, "^git_probe_timeout$"):
                     runtime_probe._git_bytes(self.repo, "slow")
+
+    def test_tty_frame_finishes_on_one_newline_without_eof(self) -> None:
+        master, slave = os.openpty()
+        try:
+            os.write(master, b'{"action":"pre_mutation"}\n')
+            self.assertEqual(
+                runtime_probe._read_tty_frame(slave),
+                b'{"action":"pre_mutation"}',
+            )
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_tty_frame_rejects_trailing_input_in_the_same_frame(self) -> None:
+        master, slave = os.openpty()
+        try:
+            os.write(master, b"{}\nsecond-frame")
+            with self.assertRaisesRegex(runtime_probe.ProbeError, "^trailing_input$"):
+                runtime_probe._read_tty_frame(slave)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    def test_tty_frame_times_out_when_open_frame_has_no_newline(self) -> None:
+        master, slave = os.openpty()
+        outcome: dict[str, object] = {}
+
+        def read_partial_frame() -> None:
+            try:
+                with mock.patch.object(
+                    runtime_probe, "PTY_FRAME_TIMEOUT_SECONDS", 0.05,
+                    create=True,
+                ):
+                    runtime_probe._read_tty_frame(slave)
+            except Exception as error:  # noqa: BLE001 - preserve worker outcome
+                outcome["error"] = error
+
+        os.write(master, b"{}")
+        reader = threading.Thread(target=read_partial_frame)
+        reader.start()
+        try:
+            reader.join(timeout=0.5)
+            completed_before_close = not reader.is_alive()
+        finally:
+            os.close(master)
+            reader.join(timeout=1)
+            os.close(slave)
+        self.assertTrue(completed_before_close, "PTY read ignored its frame deadline")
+        self.assertIsInstance(outcome.get("error"), runtime_probe.ProbeError)
+        self.assertEqual(str(outcome["error"]), "input_frame_incomplete")
+
+    def test_tty_frame_rejects_eof_before_newline(self) -> None:
+        master, slave = os.openpty()
+        os.write(master, b"{}")
+        os.close(master)
+        try:
+            with self.assertRaisesRegex(
+                runtime_probe.ProbeError, "^input_frame_incomplete$"
+            ):
+                runtime_probe._read_tty_frame(slave)
+        finally:
+            os.close(slave)
+
+    def test_read_input_rejects_oversized_non_tty_frame(self) -> None:
+        stdin = mock.Mock()
+        stdin.buffer = io.BytesIO(b"x" * (runtime_probe.MAX_INPUT_BYTES + 1))
+        with mock.patch.object(runtime_probe.sys, "stdin", stdin):
+            with self.assertRaisesRegex(runtime_probe.ProbeError, "^input_too_large$"):
+                runtime_probe._read_input()
+
+    def test_supervisor_context_requires_marker_and_all_fixed_fds(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(runtime_probe._supervisor_context_available())
+        with mock.patch.dict(
+            os.environ, {runtime_probe.SUPERVISED_ENV: "1"}, clear=True
+        ):
+            with mock.patch.object(runtime_probe.os, "fstat") as fstat:
+                self.assertTrue(runtime_probe._supervisor_context_available())
+                self.assertEqual(
+                    [call.args[0] for call in fstat.call_args_list],
+                    list(runtime_probe.SUPERVISOR_FDS),
+                )
+            with mock.patch.object(runtime_probe.os, "fstat", side_effect=OSError):
+                self.assertFalse(runtime_probe._supervisor_context_available())
+
+    def test_resolve_supervisor_uses_pinned_known_good_fallback(self) -> None:
+        runtime_root = Path(self.temp.name) / "runtime-controls"
+        runtime_root.mkdir()
+        current = runtime_root / "apr_probe_supervisor.py"
+        current.write_text("current mismatch\n", encoding="utf-8")
+        current.chmod(0o600)
+        expected_content = b"reviewed supervisor\n"
+        expected_digest = hashlib.sha256(expected_content).hexdigest()
+        known_good = (
+            runtime_root
+            / "releases"
+            / "known-good"
+            / ("a" * 64)
+            / "runtime"
+            / current.name
+        )
+        known_good.parent.mkdir(parents=True)
+        known_good.write_bytes(expected_content)
+        known_good.chmod(0o600)
+
+        with mock.patch.object(runtime_probe, "INSTALLED_SUPERVISOR", current):
+            with mock.patch.object(runtime_probe, "SUPERVISOR_SHA256", expected_digest):
+                resolved, descriptor = runtime_probe._resolve_supervisor()
+        try:
+            self.assertEqual(resolved, known_good.resolve())
+        finally:
+            os.close(descriptor)
+
+    def test_delegate_executes_verified_supervisor_after_path_replacement(self) -> None:
+        runtime_root = Path(self.temp.name) / "runtime-controls"
+        runtime_root.mkdir()
+        current = runtime_root / "apr_probe_supervisor.py"
+        support = runtime_root / "trusted_support.py"
+        support.write_text("SOURCE = 'verified'\n", encoding="utf-8")
+        support.chmod(0o600)
+        verified = (
+            b"import json, sys, trusted_support\n"
+            b"sys.stdin.buffer.read()\n"
+            b"print(json.dumps({'source': trusted_support.SOURCE, 'argv': sys.argv[1:]}))\n"
+        )
+        replacement = b"print('{\"source\": \"replacement\"}')\n"
+        current.write_bytes(verified)
+        current.chmod(0o600)
+        expected_digest = hashlib.sha256(verified).hexdigest()
+        real_run = subprocess.run
+        stdout = mock.Mock()
+        stdout.buffer = io.BytesIO()
+        stderr = mock.Mock()
+        stderr.buffer = io.BytesIO()
+        attack_dir = Path(self.temp.name) / "attacker-controlled-worktree"
+        attack_dir.mkdir()
+        (attack_dir / "sitecustomize.py").write_text(
+            "print('attacker-sitecustomize-loaded')\n", encoding="utf-8"
+        )
+
+        def replace_then_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[bytes]:
+            command = args[0]
+            self.assertEqual(command[1:4], ("-I", "-S", "-B"))
+            self.assertFalse(
+                any(key.startswith("PYTHON") for key in kwargs["env"])
+            )
+            current.write_bytes(replacement)
+            current.chmod(0o600)
+            return real_run(*args, **kwargs)
+
+        with mock.patch.dict(os.environ, {"PYTHONPATH": str(attack_dir)}):
+            with mock.patch.object(runtime_probe.Path, "cwd", return_value=attack_dir):
+                with mock.patch.object(runtime_probe, "INSTALLED_SUPERVISOR", current):
+                    with mock.patch.object(runtime_probe, "SUPERVISOR_SHA256", expected_digest):
+                        with mock.patch.object(
+                            runtime_probe.subprocess, "run", side_effect=replace_then_run
+                        ):
+                            with mock.patch.object(runtime_probe.sys, "stdout", stdout):
+                                with mock.patch.object(runtime_probe.sys, "stderr", stderr):
+                                    with self.assertRaisesRegex(SystemExit, "^0$"):
+                                        runtime_probe._delegate_to_supervisor(b"{}")
+        self.assertEqual(
+            json.loads(stdout.buffer.getvalue()),
+            {"source": "verified", "argv": ["--discover"]},
+        )
+
+    def test_trusted_supervisor_rejects_writable_file_and_symlink(self) -> None:
+        supervisor = Path(self.temp.name) / "supervisor.py"
+        supervisor.write_text("reviewed\n", encoding="utf-8")
+        supervisor.chmod(0o620)
+        with self.assertRaisesRegex(OSError, "^unsafe supervisor$"):
+            runtime_probe._trusted_supervisor_digest(supervisor)
+
+        supervisor.chmod(0o600)
+        link = Path(self.temp.name) / "supervisor-link.py"
+        link.symlink_to(supervisor)
+        with self.assertRaises(OSError):
+            runtime_probe._trusted_supervisor_digest(link)
+
+    def test_release_argument_emits_no_input_evidence(self) -> None:
+        with mock.patch.object(
+            runtime_probe, "_emit", side_effect=SystemExit(0)
+        ) as emit:
+            with self.assertRaisesRegex(SystemExit, "^0$"):
+                runtime_probe.main([runtime_probe.OWNER_RELEASE_ARGUMENT])
+        emit.assert_called_once_with(
+            {"decision": "evidence", "code": "apr_owner_release_requested"}, 0
+        )
+
+    def test_unknown_argument_fails_closed_before_reading_input(self) -> None:
+        with mock.patch.object(
+            runtime_probe, "_emit", side_effect=SystemExit(2)
+        ) as emit:
+            with mock.patch.object(runtime_probe, "_read_input") as read_input:
+                with self.assertRaisesRegex(SystemExit, "^2$"):
+                    runtime_probe.main(["--unknown"])
+        emit.assert_called_once_with(
+            {"decision": "block", "code": "invalid_arguments"}, 2
+        )
+        read_input.assert_not_called()
+
+    def test_managed_worktree_argument_requires_exact_physical_cwd(self) -> None:
+        with mock.patch.object(
+            runtime_probe, "_emit", side_effect=SystemExit(2)
+        ) as emit:
+            with self.assertRaisesRegex(SystemExit, "^2$"):
+                runtime_probe.main(
+                    [runtime_probe.MANAGED_WORKTREE_ARGUMENT, str(self.repo.resolve())]
+                )
+        emit.assert_called_once_with(
+            {
+                "decision": "block",
+                "code": "managed_worktree_argument_cwd_mismatch",
+            },
+            2,
+        )
+
+    def test_managed_worktree_argument_rejects_intermediate_symlink(self) -> None:
+        real_parent = Path(self.temp.name) / "real"
+        worktree = real_parent / "managed"
+        worktree.mkdir(parents=True)
+        alias = Path(self.temp.name) / "alias"
+        alias.symlink_to(real_parent, target_is_directory=True)
+        routed = alias / "managed"
+        with mock.patch.object(runtime_probe.Path, "cwd", return_value=worktree):
+            with mock.patch.object(
+                runtime_probe, "_emit", side_effect=SystemExit(2)
+            ) as emit:
+                with mock.patch.object(runtime_probe, "_read_input") as read_input:
+                    with self.assertRaisesRegex(SystemExit, "^2$"):
+                        runtime_probe.main(
+                            [runtime_probe.MANAGED_WORKTREE_ARGUMENT, str(routed)]
+                        )
+        emit.assert_called_once_with(
+            {"decision": "block", "code": "invalid_managed_worktree_argument"},
+            2,
+        )
+        read_input.assert_not_called()
+
+    def test_valid_managed_route_delegates_when_host_context_is_absent(self) -> None:
+        with mock.patch.object(runtime_probe.Path, "cwd", return_value=self.repo):
+            with mock.patch.object(runtime_probe, "_is_installed_probe", return_value=True):
+                with mock.patch.object(runtime_probe, "_read_input", return_value=b"{}"):
+                    with mock.patch.object(
+                        runtime_probe, "_supervisor_context_available", return_value=False
+                    ):
+                        with mock.patch.object(
+                            runtime_probe, "_delegate_to_supervisor", side_effect=SystemExit(7)
+                        ) as delegate:
+                            with self.assertRaisesRegex(SystemExit, "^7$"):
+                                runtime_probe.main(
+                                    [
+                                        runtime_probe.MANAGED_WORKTREE_ARGUMENT,
+                                        str(self.repo.resolve()),
+                                    ]
+                                )
+        delegate.assert_called_once_with(b"{}")
 
 
 if __name__ == "__main__":

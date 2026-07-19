@@ -131,6 +131,13 @@ required_contract_markers=(
   'automatically invoke the resolved official `setup-matt-pocock-skills` skill'
   'Do not require the user to remember or manually invoke setup before APR'
   'fail closed before Wayfinder, tracker access, ticket creation, or repository mutation'
+  'Exact fixture-backed tool identities are accepted; unmatched aliases fail closed'
+  'Archive failure or unknown outcome remains `archive_pending`'
+  'approval-reviewed `--managed-worktree <absolute-path>` route'
+  'Do this internally; never ask the user to reopen the project or repeat the request'
+  'two-phase release'
+  'write-ahead transaction under the lease lock'
+  'continues automatically under APR protection'
 )
 for marker in "${required_contract_markers[@]}"; do
   awk -v marker="$marker" 'index($0, marker) == 0 { print }' "$skill_path" > skill-without-contract.md

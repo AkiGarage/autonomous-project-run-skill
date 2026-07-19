@@ -17,6 +17,8 @@
 - 1つの実装チケットを1つの新しいtaskで扱い、検証してから次へ進みます。
 - compactionは永続checkpointとreplanの合図として扱い、回数だけを理由に機械的に停止しません。
 - native task callを有限時間に区切り、timeout/capacity待ちを永続化し、taskを重複作成したりpolling daemonを追加したりせず、次の実host eventで再開します。
+- 検証済みのsuccessorへ、crashから復旧できるhost transactionでownershipをatomicに移し、projectの開き直しや依頼の再送を求めません。
+- terminal状態のownershipは、永続化した完了evidenceを確認してからtwo-phaseでreleaseし、その後のmutationをfenceしつつ、古いownershipが次の作業を止めないようにします。
 - Matt Pocock氏のリポジトリ別設定が不足していないか確認し、公式setup skillを自動で呼び出して、計画や変更の前に完了を再検証します。
 - recovery guardianをread-only、project-singleton、transcript非継承とし、状態に変更がない場合やterminal状態では何も出力しません。
 - 正式な仕様、正確なsource state、dependencies、toolchain、生成物が一致する間だけ既存のevidenceを再利用します。
@@ -32,7 +34,7 @@
 - Agent Skillsに対応したcoding agent
 - 全工程を使う場合は、GitHubリポジトリと認証済みの `gh` CLI
 - Matt Pocock氏のworkflow skill suite（`setup-matt-pocock-skills`、`wayfinder`、`to-spec`、`to-tickets`、`implement` を含む）
-- native task/thread lifecycle controls、分離されたworktree、永続化したlifecycle state。無人復旧には、検証済みschedulerまたは次の実host eventの配送が必要で、追加のpolling daemonは不要です
+- native task/thread lifecycle controls、分離されたworktree、永続化したlifecycle state、automatic successor transferに対応するhost supervisor。hostが未対応の場合はpolling daemonを追加せず、次の実host eventを待って復旧します
 - hostが提供する場合はsafe-continuation handoff。ない場合は、検証済みの最小handoffを使い、正式なstateを独立して再確認できること
 - Codexのレビューゲートを使う場合は `codex-autoreview`
 
@@ -50,7 +52,7 @@ npx skills@latest add AkiGarage/autonomous-project-run-skill
 
 APRは対象リポジトリで起動すると、同梱のsetup preflightを実行します。必要な `docs/agents/*.md` 設定や対応する `Agent skills` の指示が不足・不完全な場合は、公式の `setup-matt-pocock-skills` skillを自動で呼び出し、そのskillが求める確認を行ったうえで、設定完了を再検証してから続行します。事前に `/setup-matt-pocock-skills` を手動実行しておく必要はありません。
 
-入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。任意のGuardianにはsingleton ownership、boundedなstate-only input、transcript非継承、変更なし・terminal状態での無出力が必要です。hostがこれらを強制できない場合、本スキルはguardianを追加せず、永続化されたforeground ownerが継続し、次の検証済みhost eventで復旧します。
+入手元には公式の [`mattpocock/skills`](https://github.com/mattpocock/skills) を使ってください。管理された環境では、hostがdependency lockに対応している場合、確認済みの互換revisionに固定します。任意のGuardianにはsingleton ownership、boundedなstate-only input、transcript非継承、変更なし・terminal状態での無出力が必要です。hostがこれらを強制できない場合、本スキルはguardianを追加せず、永続化されたforeground ownerが継続します。successorのautomatic wake-upには対応hostが必要で、未対応の場合は次の検証済みhost eventで復旧します。
 
 ## 使い方
 
